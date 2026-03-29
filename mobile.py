@@ -9,6 +9,18 @@ import pandas as pd
 import plotly.express as px
 from datetime import datetime, timedelta
 import random
+import sys
+import os
+
+# Make live_arena_data importable from the project root
+_PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
+if _PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, _PROJECT_ROOT)
+# Also add S1 dir so live_data.py is importable
+_S1_DIR = os.path.join(_PROJECT_ROOT, 'S1-sharp-wallet-copy')
+if _S1_DIR not in sys.path:
+    sys.path.insert(0, _S1_DIR)
+import live_arena_data
 
 # Page config optimized for mobile
 st.set_page_config(
@@ -155,112 +167,10 @@ st.markdown("""
 # Generate mobile-optimized demo data
 @st.cache_data(ttl=10)  # 10-second refresh for mobile
 def get_mobile_arena_data():
-    """Generate mobile-optimized arena data"""
-    
-    # Simplified bot data for mobile display
-    bots = [
-        {
-            'name': 'Cross-Market Divergence',
-            'short_name': 'Divergence Bot',
-            'emoji': '🔄',
-            'roi': round(random.uniform(18, 25), 1),
-            'balance': round(11800 + random.uniform(-500, 500)),
-            'trades': 12 + random.randint(0, 3),
-            'win_rate': round(random.uniform(72, 82)),
-            'status': 'online',
-            'strategy': 'Finds price differences'
-        },
-        {
-            'name': 'Sharp Wallet Copy',
-            'short_name': 'Wallet Copier',
-            'emoji': '🎯',
-            'roi': round(random.uniform(12, 18), 1),
-            'balance': round(11200 + random.uniform(-300, 400)),
-            'trades': 8 + random.randint(0, 2),
-            'win_rate': round(random.uniform(60, 70)),
-            'status': 'online',
-            'strategy': 'Copies smart traders'
-        },
-        {
-            'name': 'Wikipedia Velocity',
-            'short_name': 'News Bot',
-            'emoji': '📰',
-            'roi': round(random.uniform(6, 12), 1),
-            'balance': round(10600 + random.uniform(-200, 300)),
-            'trades': 5 + random.randint(0, 2),
-            'win_rate': round(random.uniform(65, 75)),
-            'status': 'online',
-            'strategy': 'Detects breaking news'
-        },
-        {
-            'name': 'LP Monitor',
-            'short_name': 'Liquidity Bot',
-            'emoji': '💧',
-            'roi': round(random.uniform(2, 8), 1),
-            'balance': round(10200 + random.uniform(-150, 250)),
-            'trades': 4 + random.randint(0, 1),
-            'win_rate': round(random.uniform(55, 65)),
-            'status': random.choice(['online', 'online', 'offline']),
-            'strategy': 'Monitors smart money'
-        },
-        {
-            'name': 'Economic Data',
-            'short_name': 'Econ Bot',
-            'emoji': '📊',
-            'roi': round(random.uniform(-6, 2), 1),
-            'balance': round(9400 + random.uniform(-200, 100)),
-            'trades': 2 + random.randint(0, 1),
-            'win_rate': round(random.uniform(25, 45)),
-            'status': random.choice(['online', 'offline']),
-            'strategy': 'Data-driven trades'
-        }
-    ]
-    
-    # Sort by ROI for leaderboard
-    bots.sort(key=lambda x: x['roi'], reverse=True)
-    
-    # Generate recent trades optimized for mobile viewing
-    mobile_markets = [
-        'Bitcoin $100k 2026?',
-        'Trump wins 2028?',
-        'Fed cuts rates?',
-        'AI achieves AGI?',
-        'Recession in 2026?'
-    ]
-    
-    trades = []
-    for i in range(8):
-        bot = random.choice(bots)
-        market = random.choice(mobile_markets)
-        action = random.choice(['BUY', 'SELL'])
-        
-        # Realistic status based on bot performance
-        if bot['status'] == 'offline':
-            continue
-            
-        win_chance = bot['win_rate'] / 100
-        status = random.choices(['won', 'lost'], weights=[win_chance, 1-win_chance])[0]
-        
-        if status == 'won':
-            pnl = random.randint(100, 600)
-        else:
-            pnl = -random.randint(80, 400)
-        
-        trade_time = datetime.now() - timedelta(minutes=random.randint(5, 180))
-        
-        trades.append({
-            'time': trade_time.strftime('%H:%M'),
-            'bot_emoji': bot['emoji'],
-            'bot_name': bot['short_name'],
-            'action': action,
-            'market': market,
-            'pnl': pnl,
-            'status': status
-        })
-    
-    trades.sort(key=lambda x: x['time'], reverse=True)
-    
+    """Fetch live Polymarket data for mobile (falls back to demo if API unavailable)."""
+    bots, trades, _opportunities, _competition = live_arena_data.get_arena_data()
     return bots, trades
+
 
 def main():
     # Load mobile data
@@ -331,8 +241,8 @@ def main():
         margin=dict(l=0, r=0, t=0, b=50),
         font=dict(size=14)
     )
-    fig.update_xaxis(title='', tickangle=0)
-    fig.update_yaxis(title='ROI %', title_font_size=16)
+    fig.update_xaxes(title='', tickangle=0)
+    fig.update_yaxes(title='ROI %', title_font_size=16)
     st.plotly_chart(fig, use_container_width=True)
     
     # Mobile stats grid

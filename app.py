@@ -11,6 +11,18 @@ import plotly.graph_objects as go
 from datetime import datetime, timedelta
 import random
 import time
+import sys
+import os
+
+# Make live_arena_data importable from the project root
+_PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
+if _PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, _PROJECT_ROOT)
+# Also add S1 dir so live_data.py is importable
+_S1_DIR = os.path.join(_PROJECT_ROOT, 'S1-sharp-wallet-copy')
+if _S1_DIR not in sys.path:
+    sys.path.insert(0, _S1_DIR)
+import live_arena_data
 
 # Page config
 st.set_page_config(
@@ -76,187 +88,12 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# Generate live demo data
+# Live arena data — delegates to live_arena_data.py (real Polymarket APIs + fallback)
 @st.cache_data(ttl=8)  # Cache for 8 seconds
 def get_live_arena_data():
-    """Generate realistic live trading data"""
-    
-    current_time = datetime.now()
-    
-    # Bot configurations with realistic performance
-    bots = [
-        {
-            'id': 'S2_divergence',
-            'name': 'Cross-Market Divergence',
-            'strategy': 'Detects price differences across prediction markets',
-            'base_roi': 23.4,
-            'base_balance': 12340,
-            'base_trades': 12,
-            'base_win_rate': 78,
-            'volatility': 0.8,
-            'status': 'online'
-        },
-        {
-            'id': 'S1_sharp_copy',
-            'name': 'Sharp Wallet Copy',
-            'strategy': 'Mirrors trades from high-performing wallets',
-            'base_roi': 16.7,
-            'base_balance': 11670,
-            'base_trades': 8,
-            'base_win_rate': 65,
-            'volatility': 0.6,
-            'status': 'online'
-        },
-        {
-            'id': 'S4_wikipedia',
-            'name': 'Wikipedia Velocity',
-            'strategy': 'Detects breaking news via Wikipedia edit spikes',
-            'base_roi': 9.2,
-            'base_balance': 10920,
-            'base_trades': 5,
-            'base_win_rate': 72,
-            'volatility': 1.2,
-            'status': 'online'
-        },
-        {
-            'id': 'S3_lp_monitor',
-            'name': 'LP Withdrawal Detection',
-            'strategy': 'Monitors smart money liquidity exits',
-            'base_roi': 4.8,
-            'base_balance': 10480,
-            'base_trades': 4,
-            'base_win_rate': 58,
-            'volatility': 0.9,
-            'status': random.choice(['online', 'online', 'offline'])
-        },
-        {
-            'id': 'S5_econ_data',
-            'name': 'Economic Data Positioning',
-            'strategy': 'Positions before scheduled data releases',
-            'base_roi': -3.7,
-            'base_balance': 9630,
-            'base_trades': 3,
-            'base_win_rate': 33,
-            'volatility': 1.5,
-            'status': random.choice(['online', 'offline'])
-        }
-    ]
-    
-    # Add realistic fluctuations
-    for bot in bots:
-        # ROI fluctuates with volatility
-        roi_change = random.uniform(-bot['volatility'], bot['volatility'])
-        bot['roi'] = bot['base_roi'] + roi_change
-        bot['balance'] = bot['base_balance'] + (bot['base_balance'] * roi_change / 100)
-        
-        # Trades might increase
-        bot['trades'] = bot['base_trades'] + random.randint(0, 2)
-        
-        # Win rate fluctuates slightly
-        bot['win_rate'] = max(0, min(100, bot['base_win_rate'] + random.randint(-3, 3)))
-        
-        # Calculate additional metrics
-        bot['winning_trades'] = int(bot['trades'] * bot['win_rate'] / 100)
-        bot['losing_trades'] = bot['trades'] - bot['winning_trades']
-        bot['sharpe_ratio'] = max(-2.0, min(3.0, bot['roi'] / 10 + random.uniform(-0.3, 0.3)))
-        bot['max_drawdown'] = max(0, random.uniform(2, 15))
-    
-    # Generate realistic trades
-    markets = [
-        'Will Bitcoin hit $100k in 2026?',
-        'Will Trump win the 2028 election?',
-        'Fed cuts rates in Q1 2026?',
-        'AI achieves AGI by end of 2026?',
-        'US enters recession in 2026?',
-        'Polymarket reaches $1B daily volume?',
-        'Ethereum flips Bitcoin in 2026?',
-        'Democrats win House in 2026?',
-        'Oil hits $120 per barrel in 2026?',
-        'Tesla stock doubles in 2026?'
-    ]
-    
-    trades = []
-    for i in range(15):
-        bot = random.choice(bots)
-        market = random.choice(markets)
-        action = random.choice(['BUY', 'SELL'])
-        
-        # Status weighted by bot performance
-        win_chance = bot['win_rate'] / 100
-        status = random.choices(['won', 'lost', 'pending'], 
-                               weights=[win_chance, 1-win_chance, 0.1])[0]
-        
-        # Realistic PnL based on action and status
-        if status == 'won':
-            pnl = random.randint(80, 800)
-        elif status == 'lost':
-            pnl = -random.randint(50, 400)
-        else:
-            pnl = 0
-        
-        trade_time = current_time - timedelta(minutes=random.randint(1, 240))
-        
-        trades.append({
-            'timestamp': trade_time,
-            'time_str': trade_time.strftime('%H:%M:%S'),
-            'bot_id': bot['id'],
-            'bot_name': bot['name'],
-            'action': action,
-            'market': market,
-            'pnl': pnl,
-            'status': status,
-            'conviction': round(random.uniform(6.0, 9.5), 1),
-            'size': random.randint(200, 2000)
-        })
-    
-    trades.sort(key=lambda x: x['timestamp'], reverse=True)
-    
-    # Market opportunities
-    opportunities = [
-        {
-            'type': 'Cross-Market Divergence',
-            'market': 'Bitcoin $100k 2026',
-            'confidence': round(random.uniform(7.5, 9.0), 1),
-            'edge': round(random.uniform(8, 15), 1),
-            'time_sensitive': random.randint(15, 60),
-            'source': 'Polymarket vs Kalshi'
-        },
-        {
-            'type': 'Sharp Wallet Activity',
-            'market': 'Trump 2028 Election',
-            'confidence': round(random.uniform(6.8, 8.5), 1),
-            'edge': round(random.uniform(5, 12), 1),
-            'time_sensitive': random.randint(20, 45),
-            'source': f'Wallet {random.choice(["0x123", "0x456", "0x789"])}...{random.choice(["abc", "def", "xyz"])}'
-        },
-        {
-            'type': 'Wikipedia Edit Spike',
-            'market': 'Fed Rate Decision',
-            'confidence': round(random.uniform(6.0, 7.8), 1),
-            'edge': round(random.uniform(3, 8), 1),
-            'time_sensitive': random.randint(10, 30),
-            'source': 'Federal Reserve page +340% edits'
-        },
-        {
-            'type': 'LP Exit Signal',
-            'market': 'AI AGI Timeline',
-            'confidence': round(random.uniform(7.0, 8.2), 1),
-            'edge': round(random.uniform(6, 11), 1),
-            'time_sensitive': random.randint(25, 50),
-            'source': 'Large liquidity withdrawal detected'
-        }
-    ]
-    
-    # Competition status
-    start_time = current_time - timedelta(hours=8, minutes=random.randint(0, 59))
-    competition = {
-        'name': 'Polymarket Arena Championship',
-        'start_time': start_time,
-        'duration_hours': 48,
-        'status': 'active'
-    }
-    
-    return bots, trades, opportunities, competition
+    """Fetch live Polymarket data (falls back to demo data if API unavailable)."""
+    return live_arena_data.get_arena_data()
+
 
 # Main app
 def main():
@@ -353,7 +190,7 @@ def main():
                 title='Bot Performance (ROI %)'
             )
             fig.update_layout(height=400, showlegend=False)
-            fig.update_xaxis(title='', tickangle=45)
+            fig.update_xaxes(title='', tickangle=45)
             st.plotly_chart(fig, use_container_width=True)
         
         with chart_tabs[1]:
@@ -365,8 +202,8 @@ def main():
                 title='Risk vs Return Analysis'
             )
             fig.update_layout(height=400)
-            fig.update_xaxis(title='Max Drawdown (%)')
-            fig.update_yaxis(title='ROI (%)')
+            fig.update_xaxes(title='Max Drawdown (%)')
+            fig.update_yaxes(title='ROI (%)')
             st.plotly_chart(fig, use_container_width=True)
         
         with chart_tabs[2]:
@@ -376,7 +213,7 @@ def main():
                 title='Trading Activity by Bot'
             )
             fig.update_layout(height=400, showlegend=False)
-            fig.update_xaxis(title='', tickangle=45)
+            fig.update_xaxes(title='', tickangle=45)
             st.plotly_chart(fig, use_container_width=True)
     
     with col2:
