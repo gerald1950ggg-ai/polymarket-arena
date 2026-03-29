@@ -254,7 +254,6 @@ def main():
         # Live trade feed
         st.markdown("## 🔄 Live Trade Feed")
         
-        trade_html = '<div class="trade-feed">'
         for trade in trades[:12]:
             if trade['status'] == 'won':
                 color = "#28a745"
@@ -265,20 +264,27 @@ def main():
             else:
                 color = "#6c757d"
                 icon = "⏳"
-            
-            trade_html += f"""
-            <div style="border-left: 4px solid {color}; padding: 12px; margin: 8px 0; background: rgba(255,255,255,0.8); border-radius: 5px;">
-                <div style="display: flex; justify-content: space-between; font-weight: bold;">
-                    <span>{trade['time_str']}</span>
-                    <span style="color: {color};">{icon} ${int(trade['pnl']):+,}</span>
-                </div>
-                <div><strong>{trade.get('bot_emoji','🤖')} {trade.get('bot_name', trade['bot_id'])}</strong> | {trade['action']} ${int(trade['size']):,}</div>
-                <div style="font-size: 0.9em;">📊 {str(trade['market'])[:50]}{'...' if len(str(trade['market'])) > 50 else ''}</div>
-                <div style="font-size: 0.8em; color: #666;">Conviction: {trade['conviction']}/10</div>
-            </div>
-            """
-        trade_html += '</div>'
-        st.markdown(trade_html, unsafe_allow_html=True)
+
+            bot_emoji = trade.get('bot_emoji', '🤖')
+            bot_name = trade.get('bot_name', trade.get('bot_id', 'Unknown'))
+            market_str = str(trade['market'])
+            market_display = market_str[:50] + ('...' if len(market_str) > 50 else '')
+            pnl_val = int(trade['pnl'])
+            size_val = int(trade['size'])
+
+            st.markdown(
+                f'<div style="border-left: 4px solid {color}; padding: 12px; margin: 8px 0; '
+                f'background: rgba(255,255,255,0.8); border-radius: 5px;">'
+                f'<div style="display: flex; justify-content: space-between; font-weight: bold;">'
+                f'<span>{trade["time_str"]}</span>'
+                f'<span style="color: {color};">{icon} ${pnl_val:+,}</span>'
+                f'</div>'
+                f'<div><strong>{bot_emoji} {bot_name}</strong> | {trade["action"]} ${size_val:,}</div>'
+                f'<div style="font-size: 0.9em;">📊 {market_display}</div>'
+                f'<div style="font-size: 0.8em; color: #666;">Conviction: {trade["conviction"]}/10</div>'
+                f'</div>',
+                unsafe_allow_html=True
+            )
         
         # Market opportunities
         st.markdown("## 💡 Live Market Opportunities")
