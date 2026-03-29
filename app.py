@@ -254,9 +254,9 @@ def main():
             <div style="border-left: 4px solid {color}; padding: 12px; margin: 8px 0; background: rgba(255,255,255,0.8); border-radius: 5px;">
                 <div style="display: flex; justify-content: space-between; font-weight: bold;">
                     <span>{trade['time_str']}</span>
-                    <span style="color: {color};">{icon} ${trade['pnl']:+d}</span>
+                    <span style="color: {color};">{icon} ${int(trade['pnl']):+,}</span>
                 </div>
-                <div><strong>{trade['bot_id']}</strong> | {trade['action']} ${trade['size']:,}</div>
+                <div><strong>{trade['bot_id']}</strong> | {trade['action']} ${int(trade['size']):,}</div>
                 <div style="font-size: 0.9em;">📊 {trade['market'][:45]}{'...' if len(trade['market']) > 45 else ''}</div>
                 <div style="font-size: 0.8em; color: #666;">Conviction: {trade['conviction']}/10</div>
             </div>

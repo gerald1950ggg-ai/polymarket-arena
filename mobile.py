@@ -290,7 +290,7 @@ def main():
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
                 <strong style="font-size: 18px;">{trade['time']}</strong>
                 <span style="color: {color}; font-size: 20px; font-weight: bold;">
-                    {icon} ${trade['pnl']:+d}
+                    {icon} ${int(trade['pnl']):+,}
                 </span>
             </div>
             <div style="font-size: 16px;">
