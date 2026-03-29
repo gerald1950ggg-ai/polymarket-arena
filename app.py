@@ -150,6 +150,22 @@ def main():
                 </div>
                 """, unsafe_allow_html=True)
         
+        # Bot strategy cards
+        st.markdown("### 🤖 Bot Strategies")
+        strategy_cols = st.columns(5)
+        for i, bot in enumerate(bots):
+            with strategy_cols[i]:
+                rank = i + 1
+                st.markdown(f"""
+                <div style="background: #f8f9fa; padding: 12px; border-radius: 10px; text-align: center; border-top: 4px solid {'#28a745' if bot['roi'] > 0 else '#dc3545'}; height: 160px;">
+                    <div style="font-size: 24px;">{bot['emoji']}</div>
+                    <div style="font-size: 12px; font-weight: bold; margin: 5px 0;">{bot['short_name']}</div>
+                    <div style="font-size: 11px; color: #666; line-height: 1.3;">{bot['strategy'][:80]}{'...' if len(bot['strategy']) > 80 else ''}</div>
+                </div>
+                """, unsafe_allow_html=True)
+
+        st.markdown("<br>", unsafe_allow_html=True)
+
         # Detailed leaderboard table
         st.markdown("### 📊 Detailed Performance")
         
@@ -256,8 +272,8 @@ def main():
                     <span>{trade['time_str']}</span>
                     <span style="color: {color};">{icon} ${int(trade['pnl']):+,}</span>
                 </div>
-                <div><strong>{trade['bot_id']}</strong> | {trade['action']} ${int(trade['size']):,}</div>
-                <div style="font-size: 0.9em;">📊 {trade['market'][:45]}{'...' if len(trade['market']) > 45 else ''}</div>
+                <div><strong>{trade.get('bot_emoji','🤖')} {trade.get('bot_name', trade['bot_id'])}</strong> | {trade['action']} ${int(trade['size']):,}</div>
+                <div style="font-size: 0.9em;">📊 {str(trade['market'])[:50]}{'...' if len(str(trade['market'])) > 50 else ''}</div>
                 <div style="font-size: 0.8em; color: #666;">Conviction: {trade['conviction']}/10</div>
             </div>
             """
