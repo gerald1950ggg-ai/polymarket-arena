@@ -19,6 +19,7 @@ from collections import defaultdict
 # Add parent directory to path for arena_database import
 sys.path.append(str(Path(__file__).parent.parent))
 from arena_database import ArenaDatabase
+from shadow_log import log_signal as shadow_log_signal
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
@@ -283,70 +284,56 @@ class WikipediaVelocityBot:
     # ── Paper trading ─────────────────────────────────────────────────────────
 
     def execute_paper_trade(self, signal: Dict) -> Dict:
-        """Simulate a paper trade triggered by a Wikipedia velocity signal."""
+        """Log shadow signal — no fake paper trading."""
         conviction = signal["conviction"]
-        win_rate = signal["win_rate"]
         level = signal["signal_level"]
+        edits = signal["edit_count_5min"]
+        page = signal["page_title"]
+        category = signal["category"]
 
         size = min(self.current_balance * POSITION_SIZE_PCT, MAX_POSITION_USD)
-        price = 0.55 + random.uniform(-0.05, 0.15)   # Pre-reprice entry
-        trade_cost = size * price
+        price = 0.55  # Pre-reprice estimate
 
-        if trade_cost > self.current_balance:
-            size = self.current_balance * 0.02
-            trade_cost = size * price
+        market_label = f"Wiki Velocity [{level}] — {page}"
 
-        self.current_balance -= trade_cost
-        self.total_trades += 1
-
-        is_winner = random.random() < win_rate
-        if is_winner:
-            profit = trade_cost * 0.50
-            self.current_balance += trade_cost + profit
-            self.winning_trades += 1
-            actual_pnl = profit
-            status = "won"
-        else:
-            self.losing_trades += 1
-            actual_pnl = -trade_cost
-            status = "lost"
-
-        market_label = (
-            f"Wiki Velocity [{level}] — {signal['page_title']}"
+        signal_explanation = (
+            f"Wikipedia page '{page}' (category: {category}) just received "
+            f"{edits} edits in the last 5 minutes — a [{level}] velocity signal. "
+            f"Unusual Wikipedia edit activity precedes market repricing: editors update pages "
+            f"when breaking news happens before prediction markets catch up. "
+            f"Shadow position: ${size:.0f} BUY at ~{price:.2f} (pre-reprice entry). "
+            f"Conviction: {conviction:.1f}/10. This is a speed-of-information edge."
         )
-        trade_data = {
-            "bot_id": self.bot_id,
-            "market_title": market_label,
-            "market_slug": signal["page_title"].lower().replace(" ", "-"),
-            "condition_id": "",
-            "action": "BUY",
-            "size": size,
-            "price": price,
-            "conviction_score": conviction,
-            "expected_roi": 0.50,
-            "actual_pnl": actual_pnl,
-            "status": status,
-            "trade_reason": (
-                f"Wikipedia '{signal['page_title']}' had {signal['edit_count_5min']} "
-                f"edits in 5 min ({level} velocity signal)"
-            ),
-            "source_data": {
-                "page_title": signal["page_title"],
-                "category": signal["category"],
-                "edit_count_5min": signal["edit_count_5min"],
+
+        signal_id = shadow_log_signal(
+            bot_id=self.bot_id,
+            bot_name="Wikipedia Velocity",
+            bot_emoji="📚",
+            signal_headline=f"Wiki [{level}] spike: '{page}' — {edits} edits/5min",
+            signal_explanation=signal_explanation,
+            market_title=market_label,
+            direction="BUY",
+            entry_price=price,
+            conviction_score=conviction,
+            condition_id="",
+            shadow_size=size,
+            raw_signal={
+                "page_title": page,
+                "category": category,
+                "edit_count_5min": edits,
                 "signal_level": level,
             },
-        }
+            notes=f"Wiki velocity [{level}]: {edits} edits in 5min on '{page}'"
+        )
 
-        self.arena_db.log_trade(trade_data)
-        self.trade_history.append(trade_data)
+        self.total_trades += 1
+        self.trade_history.append({"pnl": 0, "size": size * price, "actual_pnl": 0,
+                                   "status": "pending", "conviction_score": conviction})
         self._update_performance()
 
-        logger.info(
-            f"💰 Trade {status.upper()} | size=${size:.0f} | "
-            f"price={price:.3f} | PnL=${actual_pnl:.0f} | balance=${self.current_balance:.0f}"
-        )
-        return trade_data
+        logger.info(f"🕵️ Shadow signal #{signal_id} | Wiki [{level}] '{page}' {edits} edits")
+        return {"signal_id": signal_id, "market_title": market_label, "direction": "BUY",
+                "entry_price": price, "shadow_size": size}
 
     def _log_opportunity(self, signal: Dict):
         """Log a detected Wikipedia velocity opportunity."""

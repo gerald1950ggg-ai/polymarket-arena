@@ -6,6 +6,7 @@ import logging
 import sys
 sys.path.insert(0, '/Users/gerald/.openclaw/workspace/projects/polymarket-arena')
 from arena_database import ArenaDatabase
+from shadow_log import log_signal as shadow_log_signal
 
 
 @dataclass
@@ -200,46 +201,42 @@ class CrossMarketDivergenceBot:
             return None
 
     def execute_paper_trade(self, signal: DivergenceSignal):
-        """Execute paper trade and log to arena database"""
-        import random
-
+        """Log shadow signal — no fake paper trading"""
         size = min(self.balance * 0.05, 500)  # 5% max, $500 cap
         price = signal.polymarket_price
 
-        self.balance -= size
+        signal_explanation = (
+            f"Cross-market divergence detected: Polymarket shows {signal.polymarket_price:.2f} "
+            f"while {signal.source} shows {signal.external_price:.2f} — a {signal.divergence_pct*100:.1f}% gap. "
+            f"Theory: markets should converge, so we {signal.direction} Polymarket expecting it to reprice. "
+            f"Shadow position: ${size:.0f} {signal.direction} at {price:.2f}. "
+            f"Confidence: {signal.confidence:.1f}/10. Edge disappears if divergence persists >24h."
+        )
+
+        signal_id = shadow_log_signal(
+            bot_id=self.BOT_ID,
+            bot_name="Cross-Market Divergence",
+            bot_emoji="⚡",
+            signal_headline=f"Divergence {signal.divergence_pct*100:.1f}% vs {signal.source}: {signal.market_title[:50]}",
+            signal_explanation=signal_explanation,
+            market_title=signal.market_title,
+            direction=signal.direction,
+            entry_price=price,
+            conviction_score=signal.confidence,
+            condition_id=signal.condition_id,
+            shadow_size=size,
+            raw_signal={
+                "polymarket_price": signal.polymarket_price,
+                "external_price": signal.external_price,
+                "divergence_pct": signal.divergence_pct,
+                "source": signal.source,
+            },
+            notes=f"Divergence vs {signal.source}: PM={signal.polymarket_price:.2f} vs ext={signal.external_price:.2f}"
+        )
+
         self.total_trades += 1
+        self.trade_history.append({"pnl": 0, "size": size * price})
 
-        # Win if divergence closes in our favor (probability based on conviction)
-        win_chance = signal.confidence / 10.0 * 0.7  # Max 70% win rate
-        won = random.random() < win_chance
-
-        if won:
-            profit = size * signal.divergence_pct * 2  # Profit from convergence
-            self.balance += size + profit
-            self.winning_trades += 1
-            pnl = profit
-            status = "won"
-        else:
-            pnl = -size * 0.3  # Partial loss
-            self.balance += size * 0.7
-            status = "lost"
-
-        self.db.log_trade({
-            "bot_id": self.BOT_ID,
-            "market_title": signal.market_title,
-            "action": signal.direction,
-            "size": size,
-            "price": price,
-            "conviction_score": signal.confidence,
-            "expected_roi": signal.divergence_pct,
-            "actual_pnl": pnl,
-            "status": status,
-            "trade_reason": f"Divergence {signal.divergence_pct*100:.1f}% vs {signal.source} ({signal.external_price:.2f})"
-        })
-
-        self.trade_history.append({"pnl": pnl, "size": size * price})
-
-        # Update performance
         roi = ((self.balance - 10000) / 10000) * 100
         win_rate = self.winning_trades / max(self.total_trades, 1)
         self.db.update_bot_performance(self.BOT_ID, {
@@ -254,8 +251,8 @@ class CrossMarketDivergenceBot:
             "avg_trade_size": size
         })
 
-        logging.info(f"Trade: {status.upper()} | {signal.direction} {signal.market_title[:40]} | P&L ${pnl:.0f}")
-        return pnl
+        logging.info(f"🕵️ Shadow signal #{signal_id} | {signal.direction} {signal.market_title[:40]}")
+        return 0
 
     async def scan_once(self):
         """Single scan for divergence opportunities"""

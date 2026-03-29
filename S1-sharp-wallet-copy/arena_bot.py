@@ -15,6 +15,7 @@ sys.path.append(str(Path(__file__).parent.parent))
 
 from arena_database import ArenaDatabase
 from working_hybrid import WorkingHybridMonitor
+from shadow_log import log_signal as shadow_log_signal
 import logging
 
 logging.basicConfig(level=logging.INFO)
@@ -51,68 +52,49 @@ class ArenaSharpWalletBot(WorkingHybridMonitor):
         logger.info(f"🤖 {self.bot_name} initialized for arena competition")
     
     async def execute_copy_trade(self, trade_decision: dict):
-        """Execute copy trade and log to arena database"""
-        # Simulate trade execution (paper trading)
-        trade_size = trade_decision['copy_size']
+        """Log shadow signal instead of fake paper trading"""
+        wallet_address = trade_decision.get('wallet', '0xunknown')
         expected_price = trade_decision.get('current_price', 0.65)
-        
-        # Paper trade logic
-        trade_cost = trade_size * expected_price
-        if trade_cost > self.current_balance * 0.1:  # Max 10% per trade
-            trade_size = (self.current_balance * 0.1) / expected_price
-            trade_cost = trade_size * expected_price
-        
-        # Execute the trade
-        self.current_balance -= trade_cost
+        conviction = trade_decision['conviction_score']
+        market_title = trade_decision.get('market_title', 'Unknown Market')
+        shadow_size = min(self.current_balance * 0.1, 500.0)
+
+        signal_explanation = (
+            f"Wallet {wallet_address[:8]}... (top Polymarket trader) just took a position on this market. "
+            f"Based on their historical performance, we're following their trade. "
+            f"Current market price: {expected_price:.2f}. "
+            f"Shadow position: ${shadow_size:.0f} BUY at {expected_price:.2f}. "
+            f"Conviction: {conviction:.1f}/10 — this wallet has demonstrated consistent edge."
+        )
+
+        signal_id = shadow_log_signal(
+            bot_id=self.bot_id,
+            bot_name=self.bot_name,
+            bot_emoji="🎯",
+            signal_headline=f"Following wallet {wallet_address[:8]}... into \"{market_title[:50]}\"",
+            signal_explanation=signal_explanation,
+            market_title=market_title,
+            direction="BUY",
+            entry_price=expected_price,
+            conviction_score=conviction,
+            condition_id=trade_decision.get('condition_id', ''),
+            shadow_size=shadow_size,
+            raw_signal={
+                'wallet': wallet_address,
+                'original_size': trade_decision.get('original_size', 0),
+                'copy_ratio': trade_decision.get('copy_ratio', 0.02),
+                'market_slug': trade_decision.get('market_slug', ''),
+            },
+            notes=f"Copy ratio: {trade_decision.get('copy_ratio', 0.02)}"
+        )
+
         self.total_trades += 1
-        
-        # Simulate trade outcome (for demo purposes)
-        import random
-        success_chance = min(trade_decision['conviction_score'] / 10.0, 0.8)  # Max 80% based on conviction
-        is_winner = random.random() < success_chance
-        
-        if is_winner:
-            # Winning trade - assume 50% gain
-            profit = trade_cost * 0.5
-            self.current_balance += trade_cost + profit
-            self.winning_trades += 1
-            actual_pnl = profit
-            status = "won"
-        else:
-            # Losing trade - lose the investment
-            self.losing_trades += 1
-            actual_pnl = -trade_cost
-            status = "lost"
-        
-        # Log trade to arena database
-        trade_data = {
-            'bot_id': self.bot_id,
-            'market_title': trade_decision.get('market_title', 'Unknown Market'),
-            'market_slug': trade_decision.get('market_slug', ''),
-            'condition_id': trade_decision.get('condition_id', ''),
-            'action': 'BUY',
-            'size': trade_size,
-            'price': expected_price,
-            'conviction_score': trade_decision['conviction_score'],
-            'expected_roi': 0.5,  # 50% expected return
-            'actual_pnl': actual_pnl,
-            'status': status,
-            'trade_reason': f"Copied from sharp wallet {trade_decision['wallet'][:8]}",
-            'source_data': {
-                'source_wallet': trade_decision['wallet'],
-                'original_trade_size': trade_decision.get('original_size', 0),
-                'copy_ratio': trade_decision.get('copy_ratio', 0.02)
-            }
-        }
-        
-        self.arena_db.log_trade(trade_data)
-        self.trade_history.append(trade_data)
-        
-        # Update performance metrics
+        # Update performance metrics (no balance change in shadow mode)
         await self.update_performance()
-        
-        logger.info(f"🎯 Trade executed: {status.upper()} | Size: ${trade_size:.0f} | P&L: ${actual_pnl:.0f}")
-        return trade_data
+
+        logger.info(f"🕵️ Shadow signal #{signal_id} logged | wallet {wallet_address[:8]} | {market_title[:40]}")
+        return {"signal_id": signal_id, "market_title": market_title, "direction": "BUY",
+                "entry_price": expected_price, "shadow_size": shadow_size}
     
     async def update_performance(self):
         """Update bot performance in arena database"""

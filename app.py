@@ -23,6 +23,7 @@ _S1_DIR = os.path.join(_PROJECT_ROOT, 'S1-sharp-wallet-copy')
 if _S1_DIR not in sys.path:
     sys.path.insert(0, _S1_DIR)
 import live_arena_data
+from shadow_log import get_signals as shadow_get_signals, get_shadow_stats
 
 # Page config
 st.set_page_config(
@@ -196,7 +197,7 @@ def main():
         # Performance charts
         st.markdown("### 📈 Performance Analysis")
         
-        chart_tabs = st.tabs(["ROI Comparison", "Risk vs Return", "Trade Activity"])
+        chart_tabs = st.tabs(["ROI Comparison", "Risk vs Return", "Trade Activity", "🕵️ Shadow Signals"])
         
         with chart_tabs[0]:
             fig = px.bar(
@@ -231,6 +232,81 @@ def main():
             fig.update_layout(height=400, showlegend=False)
             fig.update_xaxes(title='', tickangle=45)
             st.plotly_chart(fig, use_container_width=True)
+
+        with chart_tabs[3]:
+            st.markdown("### 🕵️ Shadow Mode Signal Journal")
+            st.markdown("*Real bot signals logged with full context. P&L calculated at resolution.*")
+
+            shadow_stats = get_shadow_stats()
+            sc1, sc2, sc3, sc4, sc5 = st.columns(5)
+            sc1.metric("Total Signals", shadow_stats["total_signals"])
+            sc2.metric("⏳ Pending", shadow_stats["pending"])
+            sc3.metric("✅ Won", shadow_stats["won"])
+            sc4.metric("❌ Lost", shadow_stats["lost"])
+            sc5.metric("Win Rate", f"{shadow_stats['win_rate']}%")
+
+            pnl_color = "green" if shadow_stats["total_pnl"] >= 0 else "red"
+            st.markdown(f"""
+            <div style="background: #f8f9fa; padding: 15px; border-radius: 10px; margin: 10px 0; text-align: center;">
+                <strong>Shadow P&L:</strong>
+                <span style="color: {pnl_color}; font-size: 1.3em; font-weight: bold;">
+                    ${shadow_stats['total_pnl']:+,.2f} ({shadow_stats['roi']:+.1f}% ROI)
+                </span>
+                <span style="color: #888; font-size: 0.85em;"> — resolved signals only</span>
+            </div>
+            """, unsafe_allow_html=True)
+
+            shadow_signals = shadow_get_signals(limit=20)
+            if not shadow_signals:
+                st.info("No shadow signals yet. Signals appear here when bots detect opportunities.")
+            else:
+                for sig in shadow_signals:
+                    if sig['resolution_status'] == 'won':
+                        border_color = "#28a745"
+                        status_badge = "✅ WON"
+                        pnl_display = f"+${sig['actual_pnl']:,.0f}"
+                    elif sig['resolution_status'] == 'lost':
+                        border_color = "#dc3545"
+                        status_badge = "❌ LOST"
+                        pnl_display = f"-${abs(sig['actual_pnl']):,.0f}"
+                    else:
+                        border_color = "#6c757d"
+                        status_badge = "⏳ PENDING"
+                        pnl_display = "TBD"
+
+                    direction_color = "#28a745" if sig['direction'] == 'BUY' else "#dc3545"
+                    resolve_span = f'<span>Resolves: <strong>{sig["market_end_date"]}</strong></span>' if sig.get("market_end_date") else ''
+
+                    st.markdown(f"""
+                    <div style="border-left: 5px solid {border_color}; padding: 15px; margin: 10px 0;
+                                background: white; border-radius: 0 10px 10px 0;
+                                box-shadow: 0 2px 6px rgba(0,0,0,0.07);">
+                        <div style="display: flex; justify-content: space-between; align-items: flex-start;">
+                            <div>
+                                <span style="font-size: 18px;">{sig['bot_emoji']}</span>
+                                <strong style="margin-left: 6px;">{sig['bot_name']}</strong>
+                                <span style="color: #888; margin-left: 8px; font-size: 12px;">{sig['timestamp'][:16]}</span>
+                            </div>
+                            <div style="text-align: right;">
+                                <span style="background: {border_color}; color: white; padding: 3px 10px;
+                                            border-radius: 15px; font-size: 12px; font-weight: bold;">{status_badge}</span>
+                                <div style="font-size: 16px; font-weight: bold; color: {border_color};">{pnl_display}</div>
+                            </div>
+                        </div>
+                        <div style="font-weight: bold; margin: 8px 0; color: #333;">📊 {sig['market_title']}</div>
+                        <div style="background: #f8f9fa; padding: 10px; border-radius: 6px; font-size: 13px;
+                                    line-height: 1.5; color: #444; margin: 8px 0;">
+                            {sig['signal_explanation']}
+                        </div>
+                        <div style="display: flex; gap: 15px; font-size: 12px; color: #555;">
+                            <span><strong style="color: {direction_color};">{sig['direction']}</strong></span>
+                            <span>Entry: <strong>${sig['entry_price']:.2f}</strong></span>
+                            <span>Size: <strong>${sig['shadow_size']:,.0f}</strong></span>
+                            <span>Conviction: <strong>{sig['conviction_score']:.1f}/10</strong></span>
+                            {resolve_span}
+                        </div>
+                    </div>
+                    """, unsafe_allow_html=True)
     
     with col2:
         # Live statistics

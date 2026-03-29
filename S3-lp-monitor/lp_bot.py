@@ -19,6 +19,7 @@ from collections import defaultdict
 # Add parent directory to path for arena_database import
 sys.path.append(str(Path(__file__).parent.parent))
 from arena_database import ArenaDatabase
+from shadow_log import log_signal as shadow_log_signal
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
@@ -182,67 +183,50 @@ class LPWithdrawalBot:
     # ── Paper trading ─────────────────────────────────────────────────────────
 
     def execute_paper_trade(self, signal: Dict) -> Dict:
-        """Simulate a paper trade based on a detected LP-exit signal."""
+        """Log shadow signal — no fake paper trading."""
         conviction = signal["conviction"]
-        size = min(
-            self.current_balance * POSITION_SIZE_PCT,
-            MAX_POSITION_USD,
-        )
-        price = 0.60 + random.uniform(-0.05, 0.10)   # Simulated entry price (pre-reprice)
-        trade_cost = size * price
-
-        if trade_cost > self.current_balance:
-            size = self.current_balance * 0.02
-            trade_cost = size * price
-
-        self.current_balance -= trade_cost
-        self.total_trades += 1
-
-        is_winner = random.random() < WIN_RATE
-        if is_winner:
-            profit = trade_cost * 0.45
-            self.current_balance += trade_cost + profit
-            self.winning_trades += 1
-            actual_pnl = profit
-            status = "won"
-        else:
-            self.losing_trades += 1
-            actual_pnl = -trade_cost
-            status = "lost"
+        size = min(self.current_balance * POSITION_SIZE_PCT, MAX_POSITION_USD)
+        price = 0.60  # Mid-point estimate for LP exit scenarios
 
         market_label = f"LP Exit Signal — {signal['condition_id'][:16]}…"
-        trade_data = {
-            "bot_id": self.bot_id,
-            "market_title": market_label,
-            "market_slug": signal["condition_id"],
-            "condition_id": signal["condition_id"],
-            "action": "BUY",
-            "size": size,
-            "price": price,
-            "conviction_score": conviction,
-            "expected_roi": 0.45,
-            "actual_pnl": actual_pnl,
-            "status": status,
-            "trade_reason": (
-                f"LP exits: {signal['merge_count']} merges | "
-                f"collateral removed: ${signal['total_collateral_usd']:,.0f}"
-            ),
-            "source_data": {
+
+        signal_explanation = (
+            f"Detected {signal['merge_count']} LP merge events on this market, "
+            f"removing ${signal['total_collateral_usd']:,.0f} in collateral. "
+            f"Large LP withdrawals just before resolution = smart money exiting. "
+            f"This is a high-signal event: LPs don't pull liquidity unless they expect price movement. "
+            f"Shadow position: ${size:.0f} BUY at ~{price:.2f}. "
+            f"Conviction: {conviction:.1f}/10."
+        )
+
+        signal_id = shadow_log_signal(
+            bot_id=self.bot_id,
+            bot_name="LP Withdrawal Monitor",
+            bot_emoji="🌊",
+            signal_headline=f"LP exits ${signal['total_collateral_usd']:,.0f} from {signal['condition_id'][:16]}",
+            signal_explanation=signal_explanation,
+            market_title=market_label,
+            direction="BUY",
+            entry_price=price,
+            conviction_score=conviction,
+            condition_id=signal["condition_id"],
+            shadow_size=size,
+            raw_signal={
                 "merge_count": signal["merge_count"],
                 "total_collateral_usd": signal["total_collateral_usd"],
-                "newest_event_ts": signal["newest_ts"],
+                "newest_ts": signal["newest_ts"],
             },
-        }
+            notes=f"{signal['merge_count']} merges, ${signal['total_collateral_usd']:,.0f} removed"
+        )
 
-        self.arena_db.log_trade(trade_data)
-        self.trade_history.append(trade_data)
+        self.total_trades += 1
+        self.trade_history.append({"pnl": 0, "size": size * price, "actual_pnl": 0,
+                                   "status": "pending", "conviction_score": conviction})
         self._update_performance()
 
-        logger.info(
-            f"💰 Trade {status.upper()} | size=${size:.0f} | "
-            f"price={price:.3f} | PnL=${actual_pnl:.0f} | balance=${self.current_balance:.0f}"
-        )
-        return trade_data
+        logger.info(f"🕵️ Shadow signal #{signal_id} | LP exit ${signal['total_collateral_usd']:,.0f}")
+        return {"signal_id": signal_id, "market_title": market_label, "direction": "BUY",
+                "entry_price": price, "shadow_size": size}
 
     def _log_opportunity(self, signal: Dict):
         """Log a detected opportunity to the shared database."""

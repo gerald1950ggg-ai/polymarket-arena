@@ -16,6 +16,7 @@ import os
 
 sys.path.insert(0, '/Users/gerald/.openclaw/workspace/projects/polymarket-arena')
 from arena_database import ArenaDatabase
+from shadow_log import log_signal as shadow_log_signal
 
 logger = logging.getLogger(__name__)
 
@@ -284,51 +285,46 @@ class EconomicDataBot:
         return signals
 
     def execute_paper_trade(self, signal: EconSignal) -> float:
-        """Execute paper trade and log to arena database"""
-        import random
-
+        """Log shadow signal — no fake paper trading."""
         # Position sizing: 4% max, reduce for longer time horizons (more uncertainty)
         time_factor = max(0.5, 1.0 - (signal.minutes_until / 2880) * 0.4)
         size = min(self.balance * 0.04 * time_factor, 400)
 
-        self.balance -= size
+        hours_until = signal.minutes_until // 60
+        mins_remaining = signal.minutes_until % 60
+
+        signal_explanation = (
+            f"Economic event '{signal.event_name}' in {hours_until}h {mins_remaining}m. "
+            f"{signal.edge_reason} "
+            f"Current market price: {signal.market_price:.2f} ({signal.direction} signal). "
+            f"Shadow position: ${size:.0f} {signal.direction} at {signal.market_price:.2f}. "
+            f"Conviction: {signal.confidence:.1f}/10. "
+            f"Strategy: position before econ data release, exit after market reprices."
+        )
+
+        signal_id = shadow_log_signal(
+            bot_id=self.BOT_ID,
+            bot_name="Economic Data Bot",
+            bot_emoji="📈",
+            signal_headline=f"{signal.event_name} in {hours_until}h — {signal.direction} {signal.market_title[:45]}",
+            signal_explanation=signal_explanation,
+            market_title=signal.market_title,
+            direction=signal.direction,
+            entry_price=signal.market_price,
+            conviction_score=signal.confidence,
+            condition_id=signal.condition_id,
+            shadow_size=size,
+            raw_signal={
+                "event_name": signal.event_name,
+                "minutes_until": signal.minutes_until,
+                "market_price": signal.market_price,
+                "edge_reason": signal.edge_reason,
+            },
+            notes=f"Econ event: {signal.event_name}, {signal.minutes_until}min out"
+        )
+
         self.total_trades += 1
-
-        # Win probability: confidence × base rate × time decay
-        base_rate = 0.58  # Slight edge from economic data
-        time_decay = max(0.6, 1.0 - (signal.minutes_until / 2880) * 0.25)
-        win_chance = (signal.confidence / 10.0) * base_rate * time_decay
-
-        won = random.random() < win_chance
-
-        if won:
-            # Economic data trades: asymmetric payoffs possible
-            profit = size * random.uniform(0.12, 0.45)
-            self.balance += size + profit
-            self.winning_trades += 1
-            pnl = profit
-            status = "won"
-        else:
-            loss = size * random.uniform(0.15, 0.50)
-            self.balance += size - loss
-            pnl = -loss
-            status = "lost"
-
-        # Log to arena database
-        self.db.log_trade({
-            "bot_id": self.BOT_ID,
-            "market_title": signal.market_title,
-            "action": signal.direction,
-            "size": size,
-            "price": signal.market_price,
-            "conviction_score": signal.confidence,
-            "expected_roi": 0.20,
-            "actual_pnl": pnl,
-            "status": status,
-            "trade_reason": signal.edge_reason
-        })
-
-        self.trade_history.append({"pnl": pnl, "size": size})
+        self.trade_history.append({"pnl": 0, "size": size})
 
         roi = ((self.balance - 10000) / 10000) * 100
         win_rate = self.winning_trades / max(self.total_trades, 1)
@@ -355,13 +351,8 @@ class EconomicDataBot:
             "data_source": signal.event_name
         })
 
-        logger.info(
-            f"Trade: {status.upper()} | {signal.direction} | "
-            f"{signal.market_title[:50]} | "
-            f"P&L ${pnl:+.0f} | "
-            f"Balance: ${self.balance:.0f}"
-        )
-        return pnl
+        logger.info(f"🕵️ Shadow signal #{signal_id} | {signal.direction} | {signal.market_title[:50]}")
+        return 0
 
     async def scan_once(self):
         """Single scan for economic data opportunities"""
