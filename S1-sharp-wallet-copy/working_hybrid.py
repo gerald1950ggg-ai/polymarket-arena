@@ -170,44 +170,77 @@ class WorkingHybridMonitor:
 
     async def analyze_wallet_performance(self, wallet_address: str) -> dict | None:
         """
-        Fetch real positions + trades for a wallet via Polymarket API
-        and compute a quality score.
+        Fetch recent trades for a wallet via Polymarket API and compute a quality
+        score. Uses ONLY get_trades() — get_positions() returns 400 for most wallets.
         """
-        try:
-            positions = self.data_client.get_positions(user=wallet_address, limit=20)
-            trades    = self.data_client.get_trades(user=wallet_address, limit=20)
+        import math
 
-            if not positions and not trades:
+        try:
+            trades = self.data_client.get_trades(user=wallet_address, limit=20)
+
+            if not trades or len(trades) < 2:
+                logger.debug(f"Wallet {wallet_address[:8]}: not enough trades ({len(trades) if trades else 0})")
                 return None
 
-            total_value  = sum(float(p.current_value or 0) for p in positions)
-            active_mkts  = {p.condition_id for p in positions if p.condition_id}
-            trade_count  = len(trades)
+            trade_count = len(trades)
 
-            # Simple edge heuristic: buys at price < 0.5 that are still open
-            # (meaning outcome hasn't resolved against them yet)
-            value_buys = sum(
-                float(t.token_amount or 0) * float(t.price or 0)
-                for t in trades
-                if getattr(t, "side", "") == "BUY" and float(t.price or 0) < 0.7
-            )
-            est_win_rate = min(value_buys / max(total_value, 1), 1.0) if total_value else 0
+            # Unique markets traded (diversity)
+            unique_conditions = set()
+            total_size = 0.0
+            most_recent_ts = 0
+            most_recent_trade = None
 
-            is_sharp = (
-                total_value > 100
-                and trade_count >= 3
-                and len(active_mkts) >= 1
-            )
+            for t in trades:
+                cid = getattr(t, "condition_id", None) or ""
+                size = float(getattr(t, "size", None) or 0)
+                raw_ts = getattr(t, "timestamp", None)
+                # timestamp may be a datetime object or an int
+                if raw_ts is None:
+                    ts = 0
+                elif hasattr(raw_ts, "timestamp"):
+                    ts = int(raw_ts.timestamp())
+                else:
+                    ts = int(raw_ts)
+
+                if cid:
+                    unique_conditions.add(cid)
+                total_size += size
+                if ts > most_recent_ts:
+                    most_recent_ts = ts
+                    most_recent_trade = t
+
+            avg_trade_size = total_size / trade_count if trade_count else 0
+
+            # Recency bonus: higher score if they traded recently
+            now_ts = int(time.time())
+            seconds_since_last = now_ts - most_recent_ts if most_recent_ts else 999999
+            recency_score = max(0.0, 1.0 - seconds_since_last / 86400)  # 0–1 over 24h
+
+            market_diversity = len(unique_conditions)
+            is_sharp = trade_count >= 2  # Any wallet with 2+ trades qualifies
+
+            # Pull market info from the most recent trade
+            recent_market_title = "Unknown Market"
+            recent_condition_id = ""
+            if most_recent_trade is not None:
+                recent_condition_id = getattr(most_recent_trade, "condition_id", None) or ""
+                # Try to get a market question from the trade object
+                recent_market_title = (
+                    getattr(most_recent_trade, "title", None)
+                    or getattr(most_recent_trade, "slug", None)
+                    or (f"Market {recent_condition_id[:8]}..." if recent_condition_id else "Unknown Market")
+                )
 
             return {
-                "wallet":            wallet_address,
-                "portfolio_value":   total_value,
-                "positions_count":   len(positions),
-                "markets_count":     len(active_mkts),
-                "trades_count":      trade_count,
-                "estimated_win_rate": est_win_rate,
-                "discovery_score":   self._wallet_scores.get(wallet_address, 0),
-                "is_sharp":          is_sharp,
+                "wallet":              wallet_address,
+                "trades_count":        trade_count,
+                "market_diversity":    market_diversity,
+                "avg_trade_size":      avg_trade_size,
+                "recency_score":       recency_score,
+                "discovery_score":     self._wallet_scores.get(wallet_address, 0),
+                "is_sharp":            is_sharp,
+                "recent_condition_id": recent_condition_id,
+                "recent_market_title": recent_market_title,
             }
 
         except Exception as e:
@@ -221,25 +254,37 @@ class WorkingHybridMonitor:
         if not wallet_analysis or not wallet_analysis["is_sharp"]:
             return None
 
-        disc_score = wallet_analysis["discovery_score"]
-        wr_score   = wallet_analysis["estimated_win_rate"] * 3
-        size_score = min(wallet_analysis["portfolio_value"] / 1000, 5)
-        div_score  = min(wallet_analysis["markets_count"] / 5, 2)
-        conviction = wr_score + size_score + div_score + min(disc_score / 2, 2)
+        import math
 
-        if conviction >= 5.0:
-            copy_size = min(wallet_analysis["portfolio_value"] * 0.02, 1000)
+        disc_score  = min(wallet_analysis["discovery_score"] / 2, 2.0)
+        trade_score = math.log10(max(wallet_analysis["trades_count"], 1))
+        div_score   = min(wallet_analysis["market_diversity"] / 3, 1.5)
+        size_score  = min(math.log10(max(wallet_analysis["avg_trade_size"], 1)) / 3, 1.0)
+        recency     = wallet_analysis["recency_score"] * 1.5
+
+        conviction = trade_score + div_score + size_score + recency + disc_score
+
+        if conviction >= 3.0:
+            # Use the wallet's most recent trade market if available; fallback to market_context
+            condition_id = wallet_analysis.get("recent_condition_id", "")
+            market_title = wallet_analysis.get("recent_market_title", "")
+            if not market_title or market_title == "Unknown Market":
+                market_title = market_context[0]["question"] if market_context else "Unknown Market"
+            if not condition_id and market_context:
+                condition_id = market_context[0]["condition_id"]
+
+            copy_size = min(wallet_analysis["avg_trade_size"] * 0.5, 500)
             return {
-                "action":          "COPY",
+                "action":           "COPY",
                 "conviction_score": round(conviction, 2),
-                "copy_size":       copy_size,
-                "wallet":          wallet_analysis["wallet"],
-                "market_title":    (market_context[0]["question"]
-                                    if market_context else "Unknown Market"),
-                "condition_id":    (market_context[0]["condition_id"]
-                                    if market_context else ""),
-                "current_price":   0.5,
-                "copy_ratio":      0.02,
+                "copy_size":        copy_size,
+                "wallet":           wallet_analysis["wallet"],
+                "market_title":     market_title,
+                "condition_id":     condition_id,
+                "current_price":    0.5,
+                "copy_ratio":       0.02,
+                "trades_count":     wallet_analysis["trades_count"],
+                "avg_trade_size":   wallet_analysis["avg_trade_size"],
             }
         return None
 

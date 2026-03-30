@@ -18,6 +18,8 @@ import importlib.util
 import logging
 import os
 import sys
+import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 
 # Add project root to path
@@ -47,6 +49,23 @@ def load_module_from_path(module_name: str, file_path: str, extra_paths: list = 
         sys.path[:] = original_path
         if PROJECT_ROOT not in sys.path:
             sys.path.insert(0, PROJECT_ROOT)
+
+
+def run_resolution_tracker_loop(interval_seconds: int = 1800):
+    """Run the resolution tracker in a background thread every `interval_seconds`."""
+    try:
+        from resolution_tracker import resolve_pending_signals
+    except ImportError as e:
+        logger.error(f"Could not import resolution_tracker: {e}")
+        return
+
+    logger.info(f"🔄 Resolution tracker thread started (interval={interval_seconds}s)")
+    while True:
+        try:
+            resolve_pending_signals()
+        except Exception as e:
+            logger.error(f"Resolution tracker error: {e}", exc_info=True)
+        time.sleep(interval_seconds)
 
 
 def run_sync_bot(bot):
@@ -115,6 +134,16 @@ async def main():
 
     logger.info("🚀 Starting all 5 bots simultaneously...")
     logger.info("   Press Ctrl+C to stop all bots")
+
+    # ── Resolution tracker — background thread every 30 minutes ──────────────
+    tracker_thread = threading.Thread(
+        target=run_resolution_tracker_loop,
+        args=(1800,),
+        name="resolution-tracker",
+        daemon=True,
+    )
+    tracker_thread.start()
+    logger.info("✅ Resolution tracker thread started (every 30 min)")
 
     # Thread pool for sync bots (S3, S4 use time.sleep internally)
     executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="sync-bot")

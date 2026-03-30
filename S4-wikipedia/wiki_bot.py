@@ -86,7 +86,7 @@ ALL_WATCHED_PAGES: List[str] = [
 ]
 
 # Signal thresholds (edits in last 5 minutes)
-HIGH_SIGNAL_EDITS = 3    # >3 edits in 5 min → HIGH
+HIGH_SIGNAL_EDITS = 2    # >2 edits in 5 min → HIGH  (lowered from 3 for diagnostics)
 MEDIUM_SIGNAL_EDITS = 1  # >1 edit in 5 min → MEDIUM
 
 SIGNAL_WINDOW_MINUTES = 5
@@ -412,6 +412,43 @@ class WikipediaVelocityBot:
         if not changes:
             logger.info("📭 No Wikipedia changes returned — API unreachable or quiet")
             return 0
+
+        # ── DIAGNOSTIC: analyse what Wikipedia returned ───────────────────
+        logger.info(f"🔬 DIAGNOSTIC: {len(changes)} total recent changes from Wikipedia")
+
+        # Build title → edit count from recent changes
+        from collections import Counter
+        title_counts: Counter = Counter()
+        for change in changes:
+            t = change.get("title", "")
+            if t:
+                title_counts[t] += 1
+
+        # Top 5 most-edited pages in this batch (whatever Wikipedia is active on)
+        top5 = title_counts.most_common(5)
+        logger.info("🔬 DIAGNOSTIC: Top 5 most-edited pages in recent changes:")
+        for rank, (page, count) in enumerate(top5, 1):
+            logger.info(f"   {rank}. '{page}' — {count} edit(s)")
+
+        # Check which watched pages appear in the changes (even 1 edit)
+        watched_matches = []
+        for watched_title in ALL_WATCHED_PAGES:
+            for changed_title in title_counts:
+                if (watched_title.lower() in changed_title.lower()
+                        or changed_title.lower() in watched_title.lower()):
+                    watched_matches.append((watched_title, title_counts[changed_title]))
+                    break
+
+        if watched_matches:
+            logger.info(f"🔬 DIAGNOSTIC: {len(watched_matches)} watched page(s) found in recent changes:")
+            for page, count in watched_matches:
+                logger.info(f"   Page '{page}': {count} edit(s) in recent batch")
+        else:
+            logger.warning(
+                "⚠️ DIAGNOSTIC: 0 watched pages in recent changes. "
+                "Watched pages may need updating."
+            )
+        # ── END DIAGNOSTIC ────────────────────────────────────────────────
 
         signals = self.detect_signals(changes)
         logger.info(f"🔎 {len(signals)} Wikipedia velocity signal(s) detected")
