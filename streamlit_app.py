@@ -29,6 +29,11 @@ st.markdown("""
   [class*="css"], [data-testid] { color: #e6edf3; }
   .block-container { background-color: #0d1117 !important; padding: 1.5rem 2rem 2rem 2rem; max-width: 1400px; }
 
+  /* Readable text — no more pale grey */
+  p, span, div, label, li { color: #e6edf3 !important; }
+  .stMarkdown, .stMarkdown p { color: #e6edf3 !important; }
+  td, th { color: #e6edf3 !important; }
+
   /* Selectbox dark theme */
   [data-testid="stSelectbox"] > div > div {
     background-color: #161b22 !important;
@@ -134,11 +139,46 @@ st.markdown("""
 
 # ── Bot metadata ──────────────────────────────────────────────────────────────
 BOT_META = {
-    "S1_sharp_copy":  {"label": "S1 Sharp Copy",     "emoji": "🎯", "tag": "tag-s1", "color": "#58a6ff"},
-    "S2_divergence":  {"label": "S2 Divergence",     "emoji": "⚡", "tag": "tag-s2", "color": "#bc8cff"},
-    "S3_lp_monitor":  {"label": "S3 LP Monitor",     "emoji": "🌊", "tag": "tag-s3", "color": "#39d353"},
-    "S4_wikipedia":   {"label": "S4 Wikipedia",      "emoji": "📖", "tag": "tag-s4", "color": "#e3b341"},
-    "S5_econ_data":   {"label": "S5 Econ Data",      "emoji": "📊", "tag": "tag-s5", "color": "#f0883e"},
+    "S1_sharp_copy":  {
+        "label": "S1 · Sharp Wallet Copy",
+        "short": "S1",
+        "emoji": "🎯",
+        "tag": "tag-s1",
+        "color": "#58a6ff",
+        "desc": "Tracks the most profitable wallets on Polymarket and copies their trades. Scans 1,000 recent trades per hour to find who's winning."
+    },
+    "S2_divergence":  {
+        "label": "S2 · Cross-Market Divergence",
+        "short": "S2",
+        "emoji": "⚡",
+        "tag": "tag-s2",
+        "color": "#bc8cff",
+        "desc": "Compares the same market on Polymarket vs Kalshi. When prices differ by more than 5%, it signals a trade toward convergence."
+    },
+    "S3_lp_monitor":  {
+        "label": "S3 · LP Withdrawal Monitor",
+        "short": "S3",
+        "emoji": "🌊",
+        "tag": "tag-s3",
+        "color": "#39d353",
+        "desc": "Watches on-chain liquidity provider exits via the Goldsky subgraph. When LPs pull money out, they usually know something — this bot follows them."
+    },
+    "S4_wikipedia":   {
+        "label": "S4 · Wikipedia Velocity",
+        "short": "S4",
+        "emoji": "📖",
+        "tag": "tag-s4",
+        "color": "#e3b341",
+        "desc": "Monitors Wikipedia edit frequency on pages tied to active markets. A sudden spike in edits = breaking news forming = trade before the market reprices."
+    },
+    "S5_econ_data":   {
+        "label": "S5 · Economic Data Positioning",
+        "short": "S5",
+        "emoji": "📊",
+        "tag": "tag-s5",
+        "color": "#f0883e",
+        "desc": "Positions ahead of scheduled economic releases (Fed decisions, GDP, CPI). Uses CME FedWatch and Atlanta Fed GDPNow to find markets mispriced vs consensus."
+    },
 }
 
 # ── Data loading ──────────────────────────────────────────────────────────────
@@ -256,33 +296,42 @@ def main():
         unsafe_allow_html=True
     )
 
-    # ── Bot status bar ────────────────────────────────────────────────────
-    st.markdown('<div class="section-title">Bot Status</div>', unsafe_allow_html=True)
-    pills_html = ""
-    for bot_id, meta in BOT_META.items():
+    # ── Bot legend ────────────────────────────────────────────────────────
+    st.markdown('<div class="section-title">The Bots</div>', unsafe_allow_html=True)
+    bot_cols = st.columns(5)
+    for i, (bot_id, meta) in enumerate(BOT_META.items()):
         row = bot_status[bot_status["bot_id"] == bot_id] if not bot_status.empty else pd.DataFrame()
         if not row.empty:
             alive = is_alive(row.iloc[0]["last_heartbeat"])
-            task  = str(row.iloc[0].get("current_task", ""))[:50]
+            task  = str(row.iloc[0].get("current_task", "—"))[:60]
             dot   = "dot-live" if alive else "dot-error"
+            status_text = "Live" if alive else "Error"
+            status_color = "#3fb950" if alive else "#f85149"
         else:
-            alive = False
-            task  = "No data"
+            task  = "No data yet"
             dot   = "dot-idle"
+            status_text = "Waiting"
+            status_color = "#8b949e"
 
-        # Signal count for this bot
         cnt = next((b[1] for b in stats["by_bot"] if b[0] == bot_id), 0)
 
-        pills_html += (
-            f'<div class="bot-pill">'
-            f'<span class="{dot}"></span>'
-            f'<strong>{meta["emoji"]} {meta["label"]}</strong>'
-            f'<span style="color:#8b949e">·</span>'
-            f'<span style="color:#8b949e">{cnt:,} signals</span>'
-            f'</div>'
-        )
-    st.markdown(pills_html, unsafe_allow_html=True)
-    st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+        with bot_cols[i]:
+            st.markdown(
+                f'<div class="card" style="border-top: 3px solid {meta["color"]}; min-height: 160px">'
+                f'<div style="font-size:20px; margin-bottom:4px">{meta["emoji"]}</div>'
+                f'<div style="font-size:13px; font-weight:700; color:{meta["color"]}; margin-bottom:6px">{meta["label"]}</div>'
+                f'<div style="font-size:11.5px; color:#c9d1d9; line-height:1.5; margin-bottom:8px">{meta["desc"]}</div>'
+                f'<div style="display:flex; align-items:center; gap:6px; font-size:11px">'
+                f'<span class="{dot}"></span>'
+                f'<span style="color:{status_color}; font-weight:600">{status_text}</span>'
+                f'<span style="color:#484f58">·</span>'
+                f'<span style="color:#c9d1d9">{cnt:,} signals</span>'
+                f'</div>'
+                f'<div style="font-size:10.5px; color:#8b949e; margin-top:4px; font-style:italic">{task}</div>'
+                f'</div>',
+                unsafe_allow_html=True
+            )
+    st.markdown("<div style='height:4px'></div>", unsafe_allow_html=True)
 
     # ── Stat row ──────────────────────────────────────────────────────────
     sc1, sc2, sc3, sc4, sc5 = st.columns(5)
