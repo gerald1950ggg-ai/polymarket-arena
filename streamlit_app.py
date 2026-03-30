@@ -291,19 +291,32 @@ def load_stats():
         cur.execute("SELECT COALESCE(SUM(actual_pnl),0) FROM shadow_signals WHERE resolution_status IN ('won','lost')")
         realized_pnl = cur.fetchone()[0]
 
+        # S4 Wikipedia split stats
+        cur.execute("SELECT COUNT(*) FROM shadow_signals WHERE bot_id='S4_wikipedia' AND resolution_status!='invalid' AND notes LIKE '%source: proactive%'")
+        s4_proactive = cur.fetchone()[0]
+        cur.execute("SELECT COUNT(*) FROM shadow_signals WHERE bot_id='S4_wikipedia' AND resolution_status!='invalid' AND notes LIKE '%source: reactive%'")
+        s4_reactive = cur.fetchone()[0]
+        cur.execute("SELECT COUNT(*) FROM shadow_signals WHERE bot_id='S4_wikipedia' AND resolution_status!='invalid' AND condition_id != '' AND condition_id IS NOT NULL")
+        s4_matched = cur.fetchone()[0]
+        cur.execute("SELECT COUNT(*) FROM shadow_signals WHERE bot_id='S4_wikipedia' AND resolution_status='pending'")
+        s4_pending = cur.fetchone()[0]
+
         conn.close()
         return {
             "total": total, "won": won, "lost": lost, "pending": pending_count,
             "invalid": invalid_count, "last_hour": last_hour,
             "by_bot": by_bot, "conviction_buckets": conviction_buckets,
             "velocity": velocity, "capital_at_risk": capital_at_risk,
-            "realized_pnl": realized_pnl
+            "realized_pnl": realized_pnl,
+            "s4_proactive": s4_proactive, "s4_reactive": s4_reactive,
+            "s4_matched": s4_matched, "s4_pending": s4_pending,
         }
     except Exception as e:
         return {
             "total": 0, "won": 0, "lost": 0, "pending": 0, "invalid": 0,
             "last_hour": 0, "by_bot": [], "conviction_buckets": [],
-            "velocity": {}, "capital_at_risk": 0, "realized_pnl": 0
+            "velocity": {}, "capital_at_risk": 0, "realized_pnl": 0,
+            "s4_proactive": 0, "s4_reactive": 0, "s4_matched": 0, "s4_pending": 0,
         }
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -452,14 +465,24 @@ def main():
             )
             rows_html = header
             for _, row in df.iterrows():
+                bot_id = row.get("bot_id", "")
                 market = str(row.get("market_title", ""))
-                market_short = esc(market[:55] + "…" if len(market) > 55 else market)
+                notes = str(row.get("notes", ""))
+                # S4: show page + source badge in market column
+                if bot_id == "S4_wikipedia":
+                    source = "PRO" if "proactive" in notes else "RXV" if "reactive" in notes else "?"
+                    src_color = "#a371f7" if source == "PRO" else "#e3b341"
+                    has_cid = bool(row.get("condition_id"))
+                    match_dot = f'<span style="color:#3fb950" title="Market matched">●</span>' if has_cid else f'<span style="color:#484f58" title="No market match">○</span>'
+                    market_short = f'<span style="color:{src_color}; font-size:10px">[{source}]</span> {match_dot} {esc(market[:42] + "…" if len(market) > 42 else market)}'
+                else:
+                    market_short = esc(market[:52] + "…" if len(market) > 52 else market)
                 size = float(row.get("shadow_size", 0) or 0)
                 conv = float(row.get("conviction_score", 0) or 0)
                 rows_html += (
                     f'<div class="signal-row">'
                     f'<span style="color:#8b949e">{esc(fmt_time(row.get("timestamp")))}</span>'
-                    f'{bot_tag(row.get("bot_id",""))}'
+                    f'{bot_tag(bot_id)}'
                     f'<span title="{esc(market)}">{market_short}</span>'
                     f'{direction_tag(row.get("direction",""))}'
                     f'<span>${size:,.0f}</span>'
@@ -547,21 +570,60 @@ def main():
             )
             st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 
-        # Recent signal explanations
-        st.markdown('<div class="section-title">Latest Signal Detail</div>', unsafe_allow_html=True)
-        recent = load_signals(limit=3)
-        if not recent.empty:
-            for _, row in recent.iterrows():
-                meta = BOT_META.get(row.get("bot_id", ""), {"label": "Bot", "emoji": "🤖", "color": "#8b949e"})
-                explanation = str(row.get("signal_explanation", ""))[:200]
-                st.markdown(
-                    f'<div class="card" style="border-left: 3px solid {meta["color"]}; padding: 12px 16px">'
-                    f'<div style="font-size:12px; font-weight:600; margin-bottom:4px">'
-                    f'{meta["emoji"]} {esc(str(row.get("signal_headline",""))[:60])}</div>'
-                    f'<div style="font-size:11.5px; color:#8b949e; line-height:1.5">{esc(explanation)}…</div>'
-                    f'</div>',
-                    unsafe_allow_html=True
+        # S4 Wikipedia intelligence panel
+        st.markdown('<div class="section-title">📚 S4 Wikipedia Intelligence</div>', unsafe_allow_html=True)
+        s4_meta = BOT_META.get("S4_wikipedia", {"color": "#a371f7"})
+        s4_html = (
+            f'<div class="card" style="border-left:3px solid {s4_meta["color"]}; padding:0 0 4px 0">'
+            f'<div style="display:grid; grid-template-columns:1fr 1fr; gap:0; padding:0">'
+            # Row 1: mode split
+            f'<div style="padding:8px 12px; border-bottom:1px solid #21262d; border-right:1px solid #21262d">'
+            f'<div style="font-size:10px; color:#8b949e; text-transform:uppercase; letter-spacing:.05em">Proactive</div>'
+            f'<div style="font-size:18px; font-weight:700; color:{s4_meta["color"]}">{stats["s4_proactive"]}</div>'
+            f'<div style="font-size:10px; color:#8b949e">Market-seeded</div>'
+            f'</div>'
+            f'<div style="padding:8px 12px; border-bottom:1px solid #21262d">'
+            f'<div style="font-size:10px; color:#8b949e; text-transform:uppercase; letter-spacing:.05em">Reactive</div>'
+            f'<div style="font-size:18px; font-weight:700; color:#e3b341">{stats["s4_reactive"]}</div>'
+            f'<div style="font-size:10px; color:#8b949e">Breaking news</div>'
+            f'</div>'
+            # Row 2: match rate + tracking
+            f'<div style="padding:8px 12px; border-right:1px solid #21262d">'
+            f'<div style="font-size:10px; color:#8b949e; text-transform:uppercase; letter-spacing:.05em">Matched</div>'
+            f'<div style="font-size:18px; font-weight:700; color:#3fb950">{stats["s4_matched"]}</div>'
+            f'<div style="font-size:10px; color:#8b949e">Found PM market</div>'
+            f'</div>'
+            f'<div style="padding:8px 12px">'
+            f'<div style="font-size:10px; color:#8b949e; text-transform:uppercase; letter-spacing:.05em">Pending</div>'
+            f'<div style="font-size:18px; font-weight:700; color:#58a6ff">{stats["s4_pending"]}</div>'
+            f'<div style="font-size:10px; color:#8b949e">Awaiting resolution</div>'
+            f'</div>'
+            f'</div></div>'
+        )
+        st.markdown(s4_html, unsafe_allow_html=True)
+
+        # Recent S4 signals with source badge
+        recent_s4 = load_signals(limit=5, bot_filter="S4_wikipedia")
+        if not recent_s4.empty:
+            s4_feed = ""
+            for _, row in recent_s4.iterrows():
+                notes = str(row.get("notes", ""))
+                source = "proactive" if "proactive" in notes else "reactive" if "reactive" in notes else "unknown"
+                src_color = s4_meta["color"] if source == "proactive" else "#e3b341"
+                src_label = "👁 PROACTIVE" if source == "proactive" else "⚡ REACTIVE"
+                has_match = bool(row.get("condition_id"))
+                match_badge = '<span style="color:#3fb950; font-size:10px">✓ matched</span>' if has_match else '<span style="color:#484f58; font-size:10px">✗ no match</span>'
+                headline = esc(str(row.get("signal_headline", ""))[:70])
+                s4_feed += (
+                    f'<div style="padding:7px 12px; border-bottom:1px solid #21262d; font-size:11.5px">'
+                    f'<div style="display:flex; justify-content:space-between; margin-bottom:3px">'
+                    f'<span style="color:{src_color}; font-size:10px; font-weight:700">{src_label}</span>'
+                    f'{match_badge}'
+                    f'</div>'
+                    f'<div style="color:#c9d1d9">{headline}</div>'
+                    f'</div>'
                 )
+            st.markdown(f'<div class="card" style="padding:0 0 4px 0">{s4_feed}</div>', unsafe_allow_html=True)
 
     # ── Auto-refresh ──────────────────────────────────────────────────────
     st.markdown(
