@@ -20,8 +20,8 @@ logger = logging.getLogger(__name__)
 load_dotenv()
 
 # Minimum thresholds to qualify as a "sharp" wallet
-MIN_TRADES_FOR_QUALIFICATION = 5       # At least 5 trades in discovery window
-MIN_VOLUME_FOR_QUALIFICATION = 500     # At least $500 total volume
+MIN_TRADES_FOR_QUALIFICATION = 2       # At least 2 trades in discovery window
+MIN_VOLUME_FOR_QUALIFICATION = 0       # No volume floor — size field is shares not USDC
 SHARP_WALLET_REFRESH_SECONDS = 3600   # Re-discover sharp wallets every hour
 DISCOVERY_TRADE_PAGES = 3             # Pages of trades to scan (100 trades each) — keep fast
 MAX_SHARP_WALLETS = 10                # Track top N wallets at any time
