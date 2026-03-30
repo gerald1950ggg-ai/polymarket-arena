@@ -210,7 +210,11 @@ class ArenaSharpWalletBot(WorkingHybridMonitor):
     async def run_analysis(self):
         """Override to add arena-specific features"""
         logger.info("🔍 Running sharp wallet analysis...")
-        
+
+        # Refresh wallet list if needed (discovery runs every hour)
+        self.maybe_refresh_wallets()
+        logger.info(f"📊 Tracking {len(self.sharp_wallets)} sharp wallets")
+
         # Get market context
         market_context = await self.get_active_markets(limit=10)
         
