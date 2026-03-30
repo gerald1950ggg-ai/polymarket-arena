@@ -291,6 +291,24 @@ def load_stats():
         cur.execute("SELECT COALESCE(SUM(actual_pnl),0) FROM shadow_signals WHERE resolution_status IN ('won','lost')")
         realized_pnl = cur.fetchone()[0]
 
+        # Avg time to resolution
+        # From resolved: avg(resolved_at - timestamp)
+        cur.execute("""
+            SELECT AVG((julianday(resolved_at) - julianday(timestamp)) * 24)
+            FROM shadow_signals
+            WHERE resolution_status IN ('won','lost')
+            AND resolved_at IS NOT NULL AND timestamp IS NOT NULL
+        """)
+        avg_hours_resolved = cur.fetchone()[0]
+
+        # From pending with end date: avg(end_date - now)
+        cur.execute("""
+            SELECT market_end_date FROM shadow_signals
+            WHERE resolution_status='pending'
+            AND market_end_date IS NOT NULL AND market_end_date != ''
+        """)
+        end_dates = [r[0] for r in cur.fetchall()]
+
         # S4 Wikipedia split stats
         cur.execute("SELECT COUNT(*) FROM shadow_signals WHERE bot_id='S4_wikipedia' AND resolution_status!='invalid' AND notes LIKE '%source: proactive%'")
         s4_proactive = cur.fetchone()[0]
@@ -310,6 +328,8 @@ def load_stats():
             "realized_pnl": realized_pnl,
             "s4_proactive": s4_proactive, "s4_reactive": s4_reactive,
             "s4_matched": s4_matched, "s4_pending": s4_pending,
+            "avg_hours_resolved": avg_hours_resolved,
+            "end_dates": end_dates,
         }
     except Exception as e:
         return {
@@ -317,6 +337,7 @@ def load_stats():
             "last_hour": 0, "by_bot": [], "conviction_buckets": [],
             "velocity": {}, "capital_at_risk": 0, "realized_pnl": 0,
             "s4_proactive": 0, "s4_reactive": 0, "s4_matched": 0, "s4_pending": 0,
+            "avg_hours_resolved": None, "end_dates": [],
         }
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -429,11 +450,39 @@ def main():
     pnl_color = "#3fb950" if stats['realized_pnl'] >= 0 else "#f85149"
     pnl_str = f"+${stats['realized_pnl']:,.0f}" if stats['realized_pnl'] >= 0 else f"-${abs(stats['realized_pnl']):,.0f}"
 
+    # Avg time to resolution: prefer actual resolved data, fallback to pending end dates
+    from datetime import datetime, timezone
+    if stats['avg_hours_resolved'] is not None:
+        h = stats['avg_hours_resolved']
+        avg_ttr = f"{h:.1f}h" if h < 48 else f"{h/24:.1f}d"
+        ttr_label = "Avg Resolution Time"
+    elif stats['end_dates']:
+        now = datetime.now(timezone.utc)
+        deltas = []
+        for ed in stats['end_dates']:
+            try:
+                dt = datetime.fromisoformat(ed.replace("Z", "+00:00"))
+                diff = (dt - now).total_seconds() / 3600
+                if diff > 0:
+                    deltas.append(diff)
+            except Exception:
+                pass
+        if deltas:
+            avg_h = sum(deltas) / len(deltas)
+            avg_ttr = f"~{avg_h:.1f}h" if avg_h < 48 else f"~{avg_h/24:.1f}d"
+            ttr_label = "Avg Time to Resolution"
+        else:
+            avg_ttr = "—"
+            ttr_label = "Avg Time to Resolution"
+    else:
+        avg_ttr = "—"
+        ttr_label = "Avg Time to Resolution"
+
     stat_card(sc1, f"{stats['pending']:,}", "Pending Signals")
     stat_card(sc2, f"${stats['capital_at_risk']:,.0f}", "Capital at Risk", "#58a6ff")
     stat_card(sc3, wr, "Win Rate", "#3fb950" if resolved > 0 else "#8b949e")
     stat_card(sc4, pnl_str, "Realized P&L", pnl_color)
-    stat_card(sc5, f"{stats['last_hour']}", "Signals This Hour", "#e6edf3")
+    stat_card(sc5, avg_ttr, ttr_label, "#e3b341")
 
     # ── Main layout: signal feed | right panel ────────────────────────────
     feed_col, right_col = st.columns([2, 1])

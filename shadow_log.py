@@ -155,7 +155,7 @@ def log_signal(
             return -1  # Signal rejected
         # If market data came back, use its end date
         if market and not market.get("_unvalidated"):
-            end = market.get("endDate") or market.get("end_date") or ""
+            end = market.get("end_date_iso") or market.get("endDate") or market.get("end_date") or ""
             if end and not market_end_date:
                 market_end_date = end
             # Use real market question if we don't have a good title
