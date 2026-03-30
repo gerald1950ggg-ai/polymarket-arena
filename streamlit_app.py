@@ -1,307 +1,413 @@
 #!/usr/bin/env python3
 """
-Polymarket Arena - Streamlit Dashboard
-Real-time monitoring of 5 competing trading bots
+Polymarket Arena — Dashboard
+Real signals, real bots, real data.
 """
 
 import streamlit as st
 import pandas as pd
-import plotly.express as px
 import plotly.graph_objects as go
+import sqlite3
+import os
 from datetime import datetime, timedelta
-import time
-import asyncio
-from arena_database import ArenaDatabase
 
-# Page config
+# ── Page config ───────────────────────────────────────────────────────────────
 st.set_page_config(
-    page_title="🏟️ Polymarket Arena", 
+    page_title="Polymarket Arena",
     page_icon="🏟️",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="collapsed",
 )
 
-# Custom CSS
+# ── Theme ─────────────────────────────────────────────────────────────────────
 st.markdown("""
 <style>
-    .metric-card {
-        background-color: #f0f2f6;
-        padding: 10px;
-        border-radius: 10px;
-        margin: 5px 0;
-    }
-    .winner-card {
-        background-color: #d4edda;
-        border: 2px solid #28a745;
-    }
-    .loser-card {
-        background-color: #f8d7da;
-        border: 2px solid #dc3545;
-    }
-    .trade-feed {
-        height: 300px;
-        overflow-y: scroll;
-        background-color: #f8f9fa;
-        padding: 10px;
-        border-radius: 5px;
-        font-family: monospace;
-        font-size: 12px;
-    }
+  /* Base */
+  html, body, [class*="css"] {
+    background-color: #0d1117;
+    color: #e6edf3;
+    font-family: 'Inter', 'Segoe UI', sans-serif;
+  }
+  .main { background-color: #0d1117; }
+  .block-container { padding: 1.5rem 2rem 2rem 2rem; max-width: 1400px; }
+
+  /* Hide Streamlit chrome */
+  #MainMenu, footer, header { visibility: hidden; }
+
+  /* Bot pills */
+  .bot-pill {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 8px 16px; border-radius: 8px;
+    background: #161b22; border: 1px solid #30363d;
+    margin-right: 10px; margin-bottom: 8px;
+    font-size: 13px; font-weight: 500;
+  }
+  .dot-live  { width: 8px; height: 8px; border-radius: 50%; background: #3fb950; display:inline-block; }
+  .dot-error { width: 8px; height: 8px; border-radius: 50%; background: #f85149; display:inline-block; }
+  .dot-idle  { width: 8px; height: 8px; border-radius: 50%; background: #8b949e; display:inline-block; }
+
+  /* Section headers */
+  .section-title {
+    font-size: 11px; font-weight: 600; letter-spacing: 0.08em;
+    text-transform: uppercase; color: #8b949e;
+    margin-bottom: 12px; margin-top: 4px;
+  }
+
+  /* Cards */
+  .card {
+    background: #161b22; border: 1px solid #30363d;
+    border-radius: 10px; padding: 16px 20px; margin-bottom: 16px;
+  }
+
+  /* Signal table */
+  .signal-row {
+    display: grid;
+    grid-template-columns: 80px 110px 1fr 60px 70px 70px 80px;
+    gap: 8px; align-items: center;
+    padding: 8px 12px; border-radius: 6px;
+    font-size: 12.5px; border-bottom: 1px solid #21262d;
+  }
+  .signal-row:hover { background: #1c2128; }
+  .signal-row.header { color: #8b949e; font-size: 11px; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.06em; border-bottom: 1px solid #30363d; }
+
+  .tag { display:inline-block; padding: 2px 8px; border-radius: 4px;
+    font-size: 11px; font-weight: 600; }
+  .tag-buy   { background: #1a3a2a; color: #3fb950; }
+  .tag-sell  { background: #3a1a1a; color: #f85149; }
+  .tag-s1    { background: #1a2a3a; color: #58a6ff; }
+  .tag-s2    { background: #2a1a3a; color: #bc8cff; }
+  .tag-s3    { background: #1a3a3a; color: #39d353; }
+  .tag-s4    { background: #3a3a1a; color: #e3b341; }
+  .tag-s5    { background: #3a2a1a; color: #f0883e; }
+  .tag-pending { background: #1a2a1a; color: #8b949e; }
+  .tag-won   { background: #1a3a2a; color: #3fb950; }
+  .tag-lost  { background: #3a1a1a; color: #f85149; }
+
+  /* Leaderboard */
+  .lb-row {
+    display: grid; grid-template-columns: 30px 1fr 60px 80px;
+    gap: 8px; align-items: center;
+    padding: 7px 12px; border-radius: 6px; font-size: 12.5px;
+    border-bottom: 1px solid #21262d;
+  }
+  .lb-row:hover { background: #1c2128; }
+  .rank { color: #8b949e; font-size: 12px; }
+
+  /* Stat numbers */
+  .stat-big { font-size: 28px; font-weight: 700; line-height: 1.1; }
+  .stat-label { font-size: 11px; color: #8b949e; text-transform: uppercase;
+    letter-spacing: 0.06em; margin-top: 2px; }
+
+  /* Scrollable feed */
+  .feed-wrap { max-height: 520px; overflow-y: auto; }
+  .feed-wrap::-webkit-scrollbar { width: 4px; }
+  .feed-wrap::-webkit-scrollbar-track { background: #161b22; }
+  .feed-wrap::-webkit-scrollbar-thumb { background: #30363d; border-radius: 2px; }
 </style>
 """, unsafe_allow_html=True)
 
-@st.cache_data(ttl=5)  # Cache for 5 seconds
-def load_arena_data():
-    """Load fresh data from arena database"""
-    db = ArenaDatabase()
-    
-    leaderboard = db.get_live_leaderboard()
-    recent_trades = db.get_recent_trades(limit=50)
-    opportunities = db.get_market_opportunities()
-    competition = db.get_active_competition()
-    
-    return leaderboard, recent_trades, opportunities, competition
+# ── Bot metadata ──────────────────────────────────────────────────────────────
+BOT_META = {
+    "S1_sharp_copy":  {"label": "S1 Sharp Copy",     "emoji": "🎯", "tag": "tag-s1", "color": "#58a6ff"},
+    "S2_divergence":  {"label": "S2 Divergence",     "emoji": "⚡", "tag": "tag-s2", "color": "#bc8cff"},
+    "S3_lp_monitor":  {"label": "S3 LP Monitor",     "emoji": "🌊", "tag": "tag-s3", "color": "#39d353"},
+    "S4_wikipedia":   {"label": "S4 Wikipedia",      "emoji": "📖", "tag": "tag-s4", "color": "#e3b341"},
+    "S5_econ_data":   {"label": "S5 Econ Data",      "emoji": "📊", "tag": "tag-s5", "color": "#f0883e"},
+}
 
-def display_competition_header(competition):
-    """Display competition status header"""
-    if competition:
-        start_time = datetime.fromisoformat(competition['start_time'])
-        end_time = datetime.fromisoformat(competition['end_time'])
-        now = datetime.now()
-        
-        if now < end_time:
-            time_remaining = end_time - now
-            hours = int(time_remaining.total_seconds() // 3600)
-            minutes = int((time_remaining.total_seconds() % 3600) // 60)
-            status_color = "🟢"
-            status_text = f"ACTIVE - {hours}h {minutes}m remaining"
-        else:
-            status_color = "🔴"
-            status_text = "COMPLETED"
-        
-        st.markdown(f"""
-        <div style="text-align: center; padding: 20px; background-color: #f0f2f6; border-radius: 10px; margin-bottom: 20px;">
-            <h1>🏟️ POLYMARKET ARENA</h1>
-            <h3>{status_color} {competition['name']}</h3>
-            <p><strong>Status:</strong> {status_text}</p>
-        </div>
-        """, unsafe_allow_html=True)
-    else:
-        st.markdown("""
-        <div style="text-align: center; padding: 20px; background-color: #f0f2f6; border-radius: 10px; margin-bottom: 20px;">
-            <h1>🏟️ POLYMARKET ARENA</h1>
-            <p>No active competition</p>
-        </div>
-        """, unsafe_allow_html=True)
+# ── Data loading ──────────────────────────────────────────────────────────────
+DB_PATHS = [
+    "/home/ubuntu/polymarket-arena/shadow.db",
+    "/home/ubuntu/polymarket-arena/arena.db",
+    os.path.join(os.path.dirname(__file__), "shadow.db"),
+    os.path.join(os.path.dirname(__file__), "arena.db"),
+]
 
-def display_live_leaderboard(leaderboard):
-    """Display the main leaderboard"""
-    st.subheader("🏆 Live Leaderboard")
-    
-    if not leaderboard:
-        st.warning("No bots registered yet")
-        return
-    
-    # Create columns for top 3
-    cols = st.columns(3)
-    
-    for i, bot in enumerate(leaderboard[:3]):
-        with cols[i]:
-            # Determine medal and colors
-            if i == 0:
-                medal = "🥇"
-                card_class = "winner-card"
-            elif i == 1:
-                medal = "🥈" 
-                card_class = "metric-card"
-            else:
-                medal = "🥉"
-                card_class = "metric-card"
-            
-            # Status indicator
-            status_emoji = "🟢" if bot['is_alive'] else "🔴"
-            
-            st.markdown(f"""
-            <div class="metric-card {card_class}">
-                <h4>{medal} {bot['bot_name']}</h4>
-                <p><strong>ROI:</strong> {bot['total_roi']:.1f}%</p>
-                <p><strong>Balance:</strong> ${bot['current_balance']:.0f}</p>
-                <p><strong>Trades:</strong> {bot['total_trades']}</p>
-                <p><strong>Win Rate:</strong> {bot['win_rate']:.1%}</p>
-                <p><strong>Status:</strong> {status_emoji} {bot['live_status'] or 'Unknown'}</p>
-            </div>
-            """, unsafe_allow_html=True)
-    
-    # Full leaderboard table
-    st.subheader("📊 Full Rankings")
-    
-    leaderboard_df = pd.DataFrame(leaderboard)
-    if not leaderboard_df.empty:
-        # Format the dataframe for display
-        display_df = leaderboard_df[[
-            'bot_name', 'total_roi', 'current_balance', 'total_trades', 
-            'win_rate', 'sharpe_ratio', 'max_drawdown', 'is_alive'
-        ]].copy()
-        
-        display_df.columns = [
-            'Bot Name', 'ROI (%)', 'Balance ($)', 'Trades', 
-            'Win Rate', 'Sharpe', 'Max DD (%)', 'Status'
-        ]
-        
-        # Format columns
-        display_df['ROI (%)'] = display_df['ROI (%)'].round(1)
-        display_df['Balance ($)'] = display_df['Balance ($)'].round(0)
-        display_df['Win Rate'] = (display_df['Win Rate'] * 100).round(1)
-        display_df['Sharpe'] = display_df['Sharpe'].round(2)
-        display_df['Max DD (%)'] = display_df['Max DD (%)'].round(1)
-        display_df['Status'] = display_df['Status'].apply(lambda x: "🟢 Online" if x else "🔴 Offline")
-        
-        st.dataframe(display_df, use_container_width=True)
+def get_db(name="shadow.db"):
+    base = os.path.dirname(__file__)
+    return os.path.join(base, name)
 
-def display_performance_chart(leaderboard):
-    """Display performance chart"""
-    st.subheader("📈 Performance Chart")
-    
-    if not leaderboard:
-        st.info("No performance data available")
-        return
-    
-    # Create sample performance data (in production, this would be time series)
-    chart_data = pd.DataFrame({
-        'Bot': [bot['bot_name'] for bot in leaderboard],
-        'ROI': [bot['total_roi'] for bot in leaderboard],
-        'Trades': [bot['total_trades'] for bot in leaderboard],
-        'Win Rate': [bot['win_rate'] * 100 for bot in leaderboard]
-    })
-    
-    # Performance bar chart
-    fig = px.bar(
-        chart_data, 
-        x='Bot', 
-        y='ROI',
-        title='Bot Performance (ROI %)',
-        color='ROI',
-        color_continuous_scale='RdYlGn'
-    )
-    fig.update_layout(height=400)
-    st.plotly_chart(fig, use_container_width=True)
+@st.cache_data(ttl=10)
+def load_signals(limit=200, bot_filter=None):
+    try:
+        conn = sqlite3.connect(get_db("shadow.db"))
+        query = "SELECT * FROM shadow_signals ORDER BY rowid DESC LIMIT ?"
+        params = [limit]
+        if bot_filter and bot_filter != "All":
+            query = "SELECT * FROM shadow_signals WHERE bot_id=? ORDER BY rowid DESC LIMIT ?"
+            params = [bot_filter, limit]
+        df = pd.read_sql_query(query, conn, params=params)
+        conn.close()
+        return df
+    except Exception as e:
+        return pd.DataFrame()
 
-def display_trade_feed(recent_trades):
-    """Display live trade feed"""
-    st.subheader("🔄 Live Trade Feed")
-    
-    if not recent_trades:
-        st.info("No trades yet")
-        return
-    
-    # Create scrollable trade feed
-    trade_html = "<div class='trade-feed'>"
-    
-    for trade in recent_trades[:20]:  # Show last 20 trades
-        timestamp = datetime.fromisoformat(trade['timestamp']).strftime("%H:%M:%S")
-        
-        # Status color
-        if trade['status'] == 'won':
-            status_color = "#28a745"
-            pnl_sign = "+"
-        elif trade['status'] == 'lost':
-            status_color = "#dc3545" 
-            pnl_sign = ""
-        else:
-            status_color = "#6c757d"
-            pnl_sign = ""
-        
-        trade_html += f"""
-        <div style="margin: 5px 0; padding: 5px; border-left: 3px solid {status_color};">
-            <strong>{timestamp}</strong> | <strong>{trade['bot_id']}</strong> | {trade['action']} | 
-            <span style="color: {status_color};">{pnl_sign}${trade['actual_pnl']:.0f}</span><br>
-            📊 {trade['market_title'][:50]}{'...' if len(trade['market_title']) > 50 else ''}<br>
-            💡 {trade['trade_reason'][:60]}{'...' if len(trade['trade_reason']) > 60 else ''}
-        </div>
-        """
-    
-    trade_html += "</div>"
-    st.markdown(trade_html, unsafe_allow_html=True)
+@st.cache_data(ttl=10)
+def load_bot_status():
+    try:
+        conn = sqlite3.connect(get_db("arena.db"))
+        df = pd.read_sql_query("SELECT * FROM bot_status", conn)
+        conn.close()
+        return df
+    except Exception:
+        return pd.DataFrame()
 
-def display_market_opportunities(opportunities):
-    """Display current market opportunities"""
-    st.subheader("💡 Market Opportunities")
-    
-    if not opportunities:
-        st.info("No opportunities detected")
-        return
-    
-    opp_df = pd.DataFrame(opportunities)
-    if not opp_df.empty:
-        display_opp = opp_df[['type', 'market_title', 'confidence', 'expected_edge', 'detected_by']].copy()
-        display_opp.columns = ['Type', 'Market', 'Confidence', 'Edge (%)', 'Detected By']
-        display_opp['Edge (%)'] = (display_opp['Edge (%)'] * 100).round(1)
-        display_opp['Confidence'] = display_opp['Confidence'].round(1)
-        
-        st.dataframe(display_opp, use_container_width=True)
+@st.cache_data(ttl=10)
+def load_stats():
+    try:
+        conn = sqlite3.connect(get_db("shadow.db"))
+        cur = conn.cursor()
+        cur.execute("SELECT COUNT(*) FROM shadow_signals")
+        total = cur.fetchone()[0]
+        cur.execute("SELECT COUNT(*) FROM shadow_signals WHERE resolution_status='won'")
+        won = cur.fetchone()[0]
+        cur.execute("SELECT COUNT(*) FROM shadow_signals WHERE resolution_status='lost'")
+        lost = cur.fetchone()[0]
+        cur.execute("SELECT COUNT(*) FROM shadow_signals WHERE timestamp > datetime('now', '-1 hour')")
+        last_hour = cur.fetchone()[0]
+        cur.execute("SELECT bot_id, COUNT(*) as cnt, AVG(conviction_score) as avg_conv FROM shadow_signals GROUP BY bot_id ORDER BY cnt DESC")
+        by_bot = cur.fetchall()
+        conn.close()
+        return {"total": total, "won": won, "lost": lost, "last_hour": last_hour, "by_bot": by_bot}
+    except Exception:
+        return {"total": 0, "won": 0, "lost": 0, "last_hour": 0, "by_bot": []}
 
+# ── Helpers ───────────────────────────────────────────────────────────────────
+def bot_tag(bot_id):
+    m = BOT_META.get(bot_id, {"label": bot_id, "tag": "tag-s1", "emoji": "🤖"})
+    return f'<span class="tag {m["tag"]}">{m["emoji"]} {m["label"]}</span>'
+
+def direction_tag(direction):
+    d = (direction or "").upper()
+    cls = "tag-buy" if d == "BUY" else "tag-sell"
+    return f'<span class="tag {cls}">{d}</span>'
+
+def status_tag(status):
+    s = (status or "pending").lower()
+    cls = {"won": "tag-won", "lost": "tag-lost"}.get(s, "tag-pending")
+    return f'<span class="tag {cls}">{s}</span>'
+
+def fmt_time(ts):
+    try:
+        dt = datetime.fromisoformat(str(ts))
+        delta = datetime.utcnow() - dt
+        if delta.seconds < 60:
+            return f"{delta.seconds}s ago"
+        if delta.seconds < 3600:
+            return f"{delta.seconds//60}m ago"
+        return dt.strftime("%H:%M")
+    except Exception:
+        return str(ts)[:16] if ts else "—"
+
+def is_alive(heartbeat_str):
+    try:
+        hb = datetime.fromisoformat(str(heartbeat_str))
+        return (datetime.utcnow() - hb).seconds < 180
+    except Exception:
+        return False
+
+# ── Main app ──────────────────────────────────────────────────────────────────
 def main():
-    """Main dashboard"""
-    
-    # Load data
-    leaderboard, recent_trades, opportunities, competition = load_arena_data()
-    
-    # Competition header
-    display_competition_header(competition)
-    
-    # Main layout
-    col1, col2 = st.columns([2, 1])
-    
-    with col1:
-        # Leaderboard
-        display_live_leaderboard(leaderboard)
-        
-        # Performance chart
-        display_performance_chart(leaderboard)
-    
-    with col2:
-        # Trade feed
-        display_trade_feed(recent_trades)
-        
-        # Market opportunities
-        display_market_opportunities(opportunities)
-    
-    # Auto-refresh info
-    st.sidebar.markdown("### ⚡ Auto-Refresh")
-    st.sidebar.info("Dashboard refreshes every 5 seconds")
-    
-    # Bot controls
-    st.sidebar.markdown("### 🤖 Bot Controls")
-    if st.sidebar.button("🚀 Start New Competition"):
-        db = ArenaDatabase()
-        comp_id = db.start_competition("Arena Competition", 48)
-        st.sidebar.success(f"Started competition #{comp_id}")
-        st.rerun()
-    
-    # Arena stats
-    st.sidebar.markdown("### 📊 Arena Stats")
-    if leaderboard:
-        active_bots = sum(1 for bot in leaderboard if bot['is_alive'])
-        total_trades = sum(bot['total_trades'] for bot in leaderboard)
-        
-        st.sidebar.metric("Active Bots", active_bots)
-        st.sidebar.metric("Total Trades", total_trades)
-    
-    # Footer
-    st.markdown("---")
-    st.markdown("🏟️ **Polymarket Arena** - Real-time bot competition dashboard")
+    stats      = load_stats()
+    bot_status = load_bot_status()
+    signals    = load_signals(limit=200)
 
-# Auto-refresh logic
+    # ── Header ────────────────────────────────────────────────────────────
+    col_title, col_refresh = st.columns([6, 1])
+    with col_title:
+        st.markdown("## 🏟️ Polymarket Arena")
+    with col_refresh:
+        st.markdown("<div style='padding-top:8px'></div>", unsafe_allow_html=True)
+        if st.button("⟳ Refresh"):
+            st.cache_data.clear()
+            st.rerun()
+
+    st.markdown(
+        f"<div style='color:#8b949e; font-size:12px; margin-top:-12px; margin-bottom:16px'>"
+        f"Last updated {datetime.utcnow().strftime('%H:%M:%S UTC')} · "
+        f"{stats['total']:,} total signals · "
+        f"{stats['last_hour']} in last hour</div>",
+        unsafe_allow_html=True
+    )
+
+    # ── Bot status bar ────────────────────────────────────────────────────
+    st.markdown('<div class="section-title">Bot Status</div>', unsafe_allow_html=True)
+    pills_html = ""
+    for bot_id, meta in BOT_META.items():
+        row = bot_status[bot_status["bot_id"] == bot_id] if not bot_status.empty else pd.DataFrame()
+        if not row.empty:
+            alive = is_alive(row.iloc[0]["last_heartbeat"])
+            task  = str(row.iloc[0].get("current_task", ""))[:50]
+            dot   = "dot-live" if alive else "dot-error"
+        else:
+            alive = False
+            task  = "No data"
+            dot   = "dot-idle"
+
+        # Signal count for this bot
+        cnt = next((b[1] for b in stats["by_bot"] if b[0] == bot_id), 0)
+
+        pills_html += (
+            f'<div class="bot-pill">'
+            f'<span class="{dot}"></span>'
+            f'<strong>{meta["emoji"]} {meta["label"]}</strong>'
+            f'<span style="color:#8b949e">·</span>'
+            f'<span style="color:#8b949e">{cnt:,} signals</span>'
+            f'</div>'
+        )
+    st.markdown(pills_html, unsafe_allow_html=True)
+    st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+
+    # ── Stat row ──────────────────────────────────────────────────────────
+    sc1, sc2, sc3, sc4, sc5 = st.columns(5)
+    def stat_card(col, value, label, color="#e6edf3"):
+        col.markdown(
+            f'<div class="card" style="text-align:center">'
+            f'<div class="stat-big" style="color:{color}">{value}</div>'
+            f'<div class="stat-label">{label}</div>'
+            f'</div>',
+            unsafe_allow_html=True
+        )
+    stat_card(sc1, f"{stats['total']:,}", "Total Signals")
+    stat_card(sc2, f"{stats['last_hour']}", "Last Hour", "#58a6ff")
+    stat_card(sc3, f"{stats['won']}", "Resolved Won", "#3fb950")
+    stat_card(sc4, f"{stats['lost']}", "Resolved Lost", "#f85149")
+    pending = stats["total"] - stats["won"] - stats["lost"]
+    stat_card(sc5, f"{pending:,}", "Pending", "#8b949e")
+
+    # ── Main layout: signal feed | right panel ────────────────────────────
+    feed_col, right_col = st.columns([2, 1])
+
+    # ── Signal Feed ───────────────────────────────────────────────────────
+    with feed_col:
+        st.markdown('<div class="section-title">Live Signal Feed</div>', unsafe_allow_html=True)
+
+        # Filter
+        filter_opts = ["All"] + [BOT_META[b]["label"] for b in BOT_META]
+        bot_filter_label = st.selectbox("Filter by bot", filter_opts, label_visibility="collapsed")
+        bot_filter_id = None
+        for bid, meta in BOT_META.items():
+            if meta["label"] == bot_filter_label:
+                bot_filter_id = bid
+                break
+
+        df = load_signals(limit=200, bot_filter=bot_filter_id)
+
+        if df.empty:
+            st.markdown('<div class="card" style="color:#8b949e; text-align:center; padding:40px">No signals yet</div>', unsafe_allow_html=True)
+        else:
+            # Header row
+            header = (
+                '<div class="signal-row header">'
+                '<span>Time</span><span>Bot</span><span>Market</span>'
+                '<span>Dir</span><span>Size</span><span>Conv</span><span>Status</span>'
+                '</div>'
+            )
+            rows_html = header
+            for _, row in df.iterrows():
+                market = str(row.get("market_title", ""))
+                market_short = market[:55] + "…" if len(market) > 55 else market
+                size = float(row.get("shadow_size", 0) or 0)
+                conv = float(row.get("conviction_score", 0) or 0)
+                rows_html += (
+                    f'<div class="signal-row">'
+                    f'<span style="color:#8b949e">{fmt_time(row.get("timestamp"))}</span>'
+                    f'{bot_tag(row.get("bot_id",""))}'
+                    f'<span title="{market}">{market_short}</span>'
+                    f'{direction_tag(row.get("direction",""))}'
+                    f'<span>${size:,.0f}</span>'
+                    f'<span style="color:#e3b341">{conv:.1f}</span>'
+                    f'{status_tag(row.get("resolution_status",""))}'
+                    f'</div>'
+                )
+            st.markdown(
+                f'<div class="card" style="padding:0"><div class="feed-wrap">{rows_html}</div></div>',
+                unsafe_allow_html=True
+            )
+
+    # ── Right panel ───────────────────────────────────────────────────────
+    with right_col:
+
+        # Leaderboard
+        st.markdown('<div class="section-title">Signal Leaderboard</div>', unsafe_allow_html=True)
+        if stats["by_bot"]:
+            lb_html = (
+                '<div class="lb-row header" style="color:#8b949e; font-size:11px; '
+                'text-transform:uppercase; letter-spacing:.06em">'
+                '<span>#</span><span>Bot</span><span>Signals</span><span>Avg Conv</span>'
+                '</div>'
+            )
+            for i, (bot_id, cnt, avg_conv) in enumerate(stats["by_bot"], 1):
+                meta = BOT_META.get(bot_id, {"label": bot_id, "emoji": "🤖", "color": "#8b949e"})
+                lb_html += (
+                    f'<div class="lb-row">'
+                    f'<span class="rank">{i}</span>'
+                    f'<span>{meta["emoji"]} {meta["label"]}</span>'
+                    f'<span style="color:{meta["color"]}">{cnt:,}</span>'
+                    f'<span style="color:#e3b341">{avg_conv:.1f}</span>'
+                    f'</div>'
+                )
+            st.markdown(
+                f'<div class="card" style="padding:0 0 8px 0">{lb_html}</div>',
+                unsafe_allow_html=True
+            )
+        else:
+            st.markdown('<div class="card" style="color:#8b949e">No data</div>', unsafe_allow_html=True)
+
+        # Signal distribution chart
+        st.markdown('<div class="section-title">Signals by Bot</div>', unsafe_allow_html=True)
+        if stats["by_bot"]:
+            labels = [BOT_META.get(b[0], {"label": b[0]})["label"] for b in stats["by_bot"]]
+            values = [b[1] for b in stats["by_bot"]]
+            colors = [BOT_META.get(b[0], {"color": "#8b949e"})["color"] for b in stats["by_bot"]]
+
+            fig = go.Figure(go.Bar(
+                x=labels, y=values,
+                marker_color=colors,
+                text=values, textposition="outside",
+                textfont=dict(color="#e6edf3", size=12),
+            ))
+            fig.update_layout(
+                paper_bgcolor="#161b22",
+                plot_bgcolor="#161b22",
+                font=dict(color="#e6edf3", size=11),
+                margin=dict(l=8, r=8, t=8, b=8),
+                height=220,
+                xaxis=dict(showgrid=False, tickangle=-20,
+                           tickfont=dict(size=10), color="#8b949e"),
+                yaxis=dict(showgrid=True, gridcolor="#21262d", color="#8b949e"),
+                showlegend=False,
+            )
+            st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+
+        # Recent signal explanations
+        st.markdown('<div class="section-title">Latest Signal Detail</div>', unsafe_allow_html=True)
+        recent = load_signals(limit=3)
+        if not recent.empty:
+            for _, row in recent.iterrows():
+                meta = BOT_META.get(row.get("bot_id", ""), {"label": "Bot", "emoji": "🤖", "color": "#8b949e"})
+                explanation = str(row.get("signal_explanation", ""))[:200]
+                st.markdown(
+                    f'<div class="card" style="border-left: 3px solid {meta["color"]}; padding: 12px 16px">'
+                    f'<div style="font-size:12px; font-weight:600; margin-bottom:4px">'
+                    f'{meta["emoji"]} {row.get("signal_headline","")[:60]}</div>'
+                    f'<div style="font-size:11.5px; color:#8b949e; line-height:1.5">{explanation}…</div>'
+                    f'</div>',
+                    unsafe_allow_html=True
+                )
+
+    # ── Auto-refresh ──────────────────────────────────────────────────────
+    st.markdown(
+        "<div style='text-align:center; color:#484f58; font-size:11px; margin-top:24px'>"
+        "Auto-refreshes every 15 seconds · All data from live Polymarket APIs</div>",
+        unsafe_allow_html=True
+    )
+
 if __name__ == "__main__":
-    # Initialize database
-    db = ArenaDatabase()
-    
-    # Auto-refresh every 5 seconds
-    placeholder = st.empty()
-    
-    while True:
-        with placeholder.container():
-            main()
-        
-        time.sleep(5)
-        st.rerun()
+    main()
+
+# Auto-refresh every 15 seconds
+import time
+time.sleep(15)
+st.rerun()
