@@ -9,7 +9,12 @@ import pandas as pd
 import plotly.graph_objects as go
 import sqlite3
 import os
+import html
 from datetime import datetime, timedelta
+
+def esc(s):
+    """Escape a string for safe HTML injection."""
+    return html.escape(str(s) if s is not None else "", quote=True)
 
 # ── Page config ───────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -319,15 +324,15 @@ def main():
             st.markdown(
                 f'<div class="card" style="border-top: 3px solid {meta["color"]}; min-height: 160px">'
                 f'<div style="font-size:20px; margin-bottom:4px">{meta["emoji"]}</div>'
-                f'<div style="font-size:13px; font-weight:700; color:{meta["color"]}; margin-bottom:6px">{meta["label"]}</div>'
-                f'<div style="font-size:11.5px; color:#c9d1d9; line-height:1.5; margin-bottom:8px">{meta["desc"]}</div>'
+                f'<div style="font-size:13px; font-weight:700; color:{meta["color"]}; margin-bottom:6px">{esc(meta["label"])}</div>'
+                f'<div style="font-size:11.5px; color:#c9d1d9; line-height:1.5; margin-bottom:8px">{esc(meta["desc"])}</div>'
                 f'<div style="display:flex; align-items:center; gap:6px; font-size:11px">'
                 f'<span class="{dot}"></span>'
-                f'<span style="color:{status_color}; font-weight:600">{status_text}</span>'
+                f'<span style="color:{status_color}; font-weight:600">{esc(status_text)}</span>'
                 f'<span style="color:#484f58">·</span>'
                 f'<span style="color:#c9d1d9">{cnt:,} signals</span>'
                 f'</div>'
-                f'<div style="font-size:10.5px; color:#8b949e; margin-top:4px; font-style:italic">{task}</div>'
+                f'<div style="font-size:10.5px; color:#8b949e; margin-top:4px; font-style:italic">{esc(task)}</div>'
                 f'</div>',
                 unsafe_allow_html=True
             )
@@ -381,14 +386,14 @@ def main():
             rows_html = header
             for _, row in df.iterrows():
                 market = str(row.get("market_title", ""))
-                market_short = market[:55] + "…" if len(market) > 55 else market
+                market_short = esc(market[:55] + "…" if len(market) > 55 else market)
                 size = float(row.get("shadow_size", 0) or 0)
                 conv = float(row.get("conviction_score", 0) or 0)
                 rows_html += (
                     f'<div class="signal-row">'
-                    f'<span style="color:#8b949e">{fmt_time(row.get("timestamp"))}</span>'
+                    f'<span style="color:#8b949e">{esc(fmt_time(row.get("timestamp")))}</span>'
                     f'{bot_tag(row.get("bot_id",""))}'
-                    f'<span title="{market}">{market_short}</span>'
+                    f'<span title="{esc(market)}">{market_short}</span>'
                     f'{direction_tag(row.get("direction",""))}'
                     f'<span>${size:,.0f}</span>'
                     f'<span style="color:#e3b341">{conv:.1f}</span>'
@@ -465,8 +470,8 @@ def main():
                 st.markdown(
                     f'<div class="card" style="border-left: 3px solid {meta["color"]}; padding: 12px 16px">'
                     f'<div style="font-size:12px; font-weight:600; margin-bottom:4px">'
-                    f'{meta["emoji"]} {row.get("signal_headline","")[:60]}</div>'
-                    f'<div style="font-size:11.5px; color:#8b949e; line-height:1.5">{explanation}…</div>'
+                    f'{meta["emoji"]} {esc(str(row.get("signal_headline",""))[:60])}</div>'
+                    f'<div style="font-size:11.5px; color:#8b949e; line-height:1.5">{esc(explanation)}…</div>'
                     f'</div>',
                     unsafe_allow_html=True
                 )
