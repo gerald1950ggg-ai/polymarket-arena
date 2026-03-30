@@ -10,7 +10,7 @@ import plotly.graph_objects as go
 import sqlite3
 import os
 import html
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 def esc(s):
     """Escape a string for safe HTML injection."""
@@ -452,7 +452,6 @@ def main():
     pnl_str = f"+${stats['realized_pnl']:,.0f}" if stats['realized_pnl'] >= 0 else f"-${abs(stats['realized_pnl']):,.0f}"
 
     # Avg time to resolution: prefer actual resolved data, fallback to pending end dates
-    from datetime import datetime, timezone
     if stats['avg_hours_resolved'] is not None:
         h = stats['avg_hours_resolved']
         avg_ttr = f"{h:.1f}h" if h < 48 else f"{h/24:.1f}d"
