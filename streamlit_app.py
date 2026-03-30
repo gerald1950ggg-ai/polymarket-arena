@@ -228,7 +228,8 @@ def load_stats():
     try:
         conn = sqlite3.connect(get_db("shadow.db"))
         cur = conn.cursor()
-        cur.execute("SELECT COUNT(*) FROM shadow_signals")
+
+        cur.execute("SELECT COUNT(*) FROM shadow_signals WHERE resolution_status != 'invalid'")
         total = cur.fetchone()[0]
         cur.execute("SELECT COUNT(*) FROM shadow_signals WHERE resolution_status='won'")
         won = cur.fetchone()[0]
@@ -236,14 +237,74 @@ def load_stats():
         lost = cur.fetchone()[0]
         cur.execute("SELECT COUNT(*) FROM shadow_signals WHERE resolution_status='pending'")
         pending_count = cur.fetchone()[0]
+        cur.execute("SELECT COUNT(*) FROM shadow_signals WHERE resolution_status='invalid'")
+        invalid_count = cur.fetchone()[0]
         cur.execute("SELECT COUNT(*) FROM shadow_signals WHERE timestamp > datetime('now', '-1 hour') AND resolution_status != 'invalid'")
         last_hour = cur.fetchone()[0]
-        cur.execute("SELECT bot_id, COUNT(*) as cnt, AVG(conviction_score) as avg_conv FROM shadow_signals WHERE resolution_status != 'invalid' GROUP BY bot_id ORDER BY cnt DESC")
+
+        # Per-bot stats (excluding invalid)
+        cur.execute("""
+            SELECT bot_id,
+                   COUNT(*) as cnt,
+                   AVG(conviction_score) as avg_conv,
+                   SUM(shadow_size) as total_capital,
+                   SUM(conviction_score * shadow_size) as exp_value,
+                   COUNT(DISTINCT market_title) as unique_markets,
+                   SUM(CASE WHEN resolution_status='won' THEN 1 ELSE 0 END) as wins,
+                   SUM(CASE WHEN resolution_status='lost' THEN 1 ELSE 0 END) as losses,
+                   SUM(CASE WHEN actual_pnl IS NOT NULL THEN actual_pnl ELSE 0 END) as realized_pnl
+            FROM shadow_signals
+            WHERE resolution_status != 'invalid'
+            GROUP BY bot_id
+            ORDER BY cnt DESC
+        """)
         by_bot = cur.fetchall()
+
+        # Conviction buckets (pending only)
+        cur.execute("""
+            SELECT
+                CASE WHEN conviction_score>=9 THEN '9-10 🔥'
+                     WHEN conviction_score>=7 THEN '7-9 ✅'
+                     WHEN conviction_score>=5 THEN '5-7 🟡'
+                     ELSE '<5 ⚪' END as bucket,
+                COUNT(*) as cnt,
+                SUM(shadow_size) as capital
+            FROM shadow_signals WHERE resolution_status='pending'
+            GROUP BY bucket ORDER BY MIN(conviction_score) DESC
+        """)
+        conviction_buckets = cur.fetchall()
+
+        # Signal velocity per bot (last 1h)
+        cur.execute("""
+            SELECT bot_id, COUNT(*) as cnt
+            FROM shadow_signals
+            WHERE timestamp > datetime('now', '-1 hour') AND resolution_status != 'invalid'
+            GROUP BY bot_id
+        """)
+        velocity = {r[0]: r[1] for r in cur.fetchall()}
+
+        # Total capital at risk (pending only)
+        cur.execute("SELECT COALESCE(SUM(shadow_size),0) FROM shadow_signals WHERE resolution_status='pending'")
+        capital_at_risk = cur.fetchone()[0]
+
+        # Realized P&L
+        cur.execute("SELECT COALESCE(SUM(actual_pnl),0) FROM shadow_signals WHERE resolution_status IN ('won','lost')")
+        realized_pnl = cur.fetchone()[0]
+
         conn.close()
-        return {"total": total, "won": won, "lost": lost, "pending": pending_count, "last_hour": last_hour, "by_bot": by_bot}
-    except Exception:
-        return {"total": 0, "won": 0, "lost": 0, "pending": 0, "last_hour": 0, "by_bot": []}
+        return {
+            "total": total, "won": won, "lost": lost, "pending": pending_count,
+            "invalid": invalid_count, "last_hour": last_hour,
+            "by_bot": by_bot, "conviction_buckets": conviction_buckets,
+            "velocity": velocity, "capital_at_risk": capital_at_risk,
+            "realized_pnl": realized_pnl
+        }
+    except Exception as e:
+        return {
+            "total": 0, "won": 0, "lost": 0, "pending": 0, "invalid": 0,
+            "last_hour": 0, "by_bot": [], "conviction_buckets": [],
+            "velocity": {}, "capital_at_risk": 0, "realized_pnl": 0
+        }
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 def bot_tag(bot_id):
@@ -351,10 +412,23 @@ def main():
             unsafe_allow_html=True
         )
     stat_card(sc1, f"{stats['total']:,}", "Total Signals")
-    stat_card(sc2, f"{stats['last_hour']}", "Last Hour", "#58a6ff")
+    stat_card(sc2, f"${stats['capital_at_risk']:,.0f}", "Capital at Risk", "#58a6ff")
     stat_card(sc3, f"{stats['won']}", "Resolved Won", "#3fb950")
     stat_card(sc4, f"{stats['lost']}", "Resolved Lost", "#f85149")
     stat_card(sc5, f"{stats['pending']:,}", "Pending", "#8b949e")
+
+    # ── Second stat row ───────────────────────────────────────────────────
+    sr1, sr2, sr3, sr4, sr5 = st.columns(5)
+    pnl_color = "#3fb950" if stats['realized_pnl'] >= 0 else "#f85149"
+    pnl_sign = "+" if stats['realized_pnl'] >= 0 else ""
+    stat_card(sr1, f"{stats['last_hour']}", "Signals/Hour", "#e6edf3")
+    stat_card(sr2, f"{pnl_sign}${stats['realized_pnl']:,.0f}", "Realized P&L", pnl_color)
+    resolved = stats['won'] + stats['lost']
+    wr = f"{stats['won']/resolved*100:.0f}%" if resolved > 0 else "—"
+    stat_card(sr3, wr, "Win Rate", "#3fb950" if resolved > 0 else "#8b949e")
+    stat_card(sr4, f"{stats['invalid']:,}", "Rejected (invalid)", "#484f58")
+    ev = sum(b[4] or 0 for b in stats['by_bot']) / max(sum(b[1] for b in stats['by_bot']), 1) if stats['by_bot'] else 0
+    stat_card(sr5, f"{ev:,.0f}", "Avg Exp Value", "#e3b341")
 
     # ── Main layout: signal feed | right panel ────────────────────────────
     feed_col, right_col = st.columns([2, 1])
@@ -409,23 +483,38 @@ def main():
     # ── Right panel ───────────────────────────────────────────────────────
     with right_col:
 
-        # Leaderboard
-        st.markdown('<div class="section-title">Signal Leaderboard</div>', unsafe_allow_html=True)
+        # Per-bot leaderboard with rich metrics
+        st.markdown('<div class="section-title">Bot Performance</div>', unsafe_allow_html=True)
         if stats["by_bot"]:
+            # Header: Bot | Signals | Capital | Conv | Win Rate | P&L | Velocity
             lb_html = (
-                '<div class="lb-row header" style="color:#8b949e; font-size:11px; '
-                'text-transform:uppercase; letter-spacing:.06em">'
-                '<span>#</span><span>Bot</span><span>Signals</span><span>Avg Conv</span>'
+                '<div style="display:grid; grid-template-columns:1fr 45px 65px 40px 55px 65px; '
+                'gap:6px; padding:6px 12px; font-size:10px; font-weight:600; color:#8b949e; '
+                'text-transform:uppercase; letter-spacing:.06em; border-bottom:1px solid #30363d">'
+                '<span>Bot</span><span>Sigs</span><span>Capital</span>'
+                '<span>Conv</span><span>Win%</span><span>P&amp;L</span>'
                 '</div>'
             )
-            for i, (bot_id, cnt, avg_conv) in enumerate(stats["by_bot"], 1):
+            for row in stats["by_bot"]:
+                bot_id, cnt, avg_conv, total_cap, exp_val, uniq_mkts, wins, losses, rpnl = row
                 meta = BOT_META.get(bot_id, {"label": bot_id, "emoji": "🤖", "color": "#8b949e"})
+                resolved = (wins or 0) + (losses or 0)
+                wr_str = f"{wins/resolved*100:.0f}%" if resolved > 0 else "—"
+                pnl = rpnl or 0
+                pnl_str = f"+${pnl:,.0f}" if pnl >= 0 else f"-${abs(pnl):,.0f}"
+                pnl_col = "#3fb950" if pnl >= 0 else "#f85149"
+                vel = stats["velocity"].get(bot_id, 0)
+                vel_str = f"↑{vel}/h" if vel > 0 else ""
                 lb_html += (
-                    f'<div class="lb-row">'
-                    f'<span class="rank">{i}</span>'
-                    f'<span>{meta["emoji"]} {meta["label"]}</span>'
-                    f'<span style="color:{meta["color"]}">{cnt:,}</span>'
+                    f'<div style="display:grid; grid-template-columns:1fr 45px 65px 40px 55px 65px; '
+                    f'gap:6px; padding:7px 12px; font-size:11.5px; border-bottom:1px solid #21262d; align-items:center">'
+                    f'<span style="color:{meta["color"]}; font-weight:600">{meta["emoji"]} {meta["short"]}'
+                    f'<span style="color:#484f58; font-size:10px"> {vel_str}</span></span>'
+                    f'<span>{cnt}</span>'
+                    f'<span style="color:#58a6ff">${(total_cap or 0):,.0f}</span>'
                     f'<span style="color:#e3b341">{avg_conv:.1f}</span>'
+                    f'<span style="color:#{"3fb950" if resolved>0 else "484f58"}">{wr_str}</span>'
+                    f'<span style="color:{pnl_col}">{pnl_str}</span>'
                     f'</div>'
                 )
             st.markdown(
@@ -433,29 +522,47 @@ def main():
                 unsafe_allow_html=True
             )
         else:
-            st.markdown('<div class="card" style="color:#8b949e">No data</div>', unsafe_allow_html=True)
+            st.markdown('<div class="card" style="color:#8b949e">No data yet</div>', unsafe_allow_html=True)
 
-        # Signal distribution chart
-        st.markdown('<div class="section-title">Signals by Bot</div>', unsafe_allow_html=True)
+        # Conviction risk breakdown
+        st.markdown('<div class="section-title">Risk by Conviction</div>', unsafe_allow_html=True)
+        if stats["conviction_buckets"]:
+            total_pending_cap = sum(b[2] or 0 for b in stats["conviction_buckets"])
+            risk_html = ""
+            for bucket, cnt, capital in stats["conviction_buckets"]:
+                cap = capital or 0
+                pct = cap / total_pending_cap * 100 if total_pending_cap > 0 else 0
+                risk_html += (
+                    f'<div style="display:flex; justify-content:space-between; align-items:center; '
+                    f'padding:6px 12px; border-bottom:1px solid #21262d; font-size:12px">'
+                    f'<span>{esc(bucket)}</span>'
+                    f'<span style="color:#8b949e">{cnt} signals</span>'
+                    f'<span style="color:#58a6ff">${cap:,.0f}</span>'
+                    f'<span style="color:#484f58">{pct:.0f}%</span>'
+                    f'</div>'
+                )
+            st.markdown(f'<div class="card" style="padding:0 0 4px 0">{risk_html}</div>', unsafe_allow_html=True)
+        else:
+            st.markdown('<div class="card" style="color:#8b949e; font-size:12px; padding:12px">No pending signals</div>', unsafe_allow_html=True)
+
+        # Capital by bot chart
+        st.markdown('<div class="section-title">Capital at Risk by Bot</div>', unsafe_allow_html=True)
         if stats["by_bot"]:
-            labels = [BOT_META.get(b[0], {"label": b[0]})["label"] for b in stats["by_bot"]]
-            values = [b[1] for b in stats["by_bot"]]
+            labels = [BOT_META.get(b[0], {"short": b[0]})["short"] for b in stats["by_bot"]]
+            values = [b[3] or 0 for b in stats["by_bot"]]
             colors = [BOT_META.get(b[0], {"color": "#8b949e"})["color"] for b in stats["by_bot"]]
-
             fig = go.Figure(go.Bar(
                 x=labels, y=values,
                 marker_color=colors,
-                text=values, textposition="outside",
-                textfont=dict(color="#e6edf3", size=12),
+                text=[f"${v:,.0f}" for v in values],
+                textposition="outside",
+                textfont=dict(color="#e6edf3", size=10),
             ))
             fig.update_layout(
-                paper_bgcolor="#161b22",
-                plot_bgcolor="#161b22",
+                paper_bgcolor="#161b22", plot_bgcolor="#161b22",
                 font=dict(color="#e6edf3", size=11),
-                margin=dict(l=8, r=8, t=8, b=8),
-                height=220,
-                xaxis=dict(showgrid=False, tickangle=-20,
-                           tickfont=dict(size=10), color="#8b949e"),
+                margin=dict(l=8, r=8, t=8, b=8), height=180,
+                xaxis=dict(showgrid=False, tickfont=dict(size=11), color="#8b949e"),
                 yaxis=dict(showgrid=True, gridcolor="#21262d", color="#8b949e"),
                 showlegend=False,
             )
