@@ -22,14 +22,39 @@ st.set_page_config(
 # ── Theme ─────────────────────────────────────────────────────────────────────
 st.markdown("""
 <style>
-  /* Base */
+  /* Force dark everywhere */
+  html, body { background-color: #0d1117 !important; }
+  .stApp { background-color: #0d1117 !important; }
+  .main, .main > div, section[data-testid="stMain"] { background-color: #0d1117 !important; }
+  [class*="css"], [data-testid] { color: #e6edf3; }
+  .block-container { background-color: #0d1117 !important; padding: 1.5rem 2rem 2rem 2rem; max-width: 1400px; }
+
+  /* Selectbox dark theme */
+  [data-testid="stSelectbox"] > div > div {
+    background-color: #161b22 !important;
+    border: 1px solid #30363d !important;
+    border-radius: 6px !important;
+    color: #e6edf3 !important;
+  }
+  [data-testid="stSelectbox"] svg { fill: #8b949e !important; }
+  div[data-baseweb="select"] > div { background-color: #161b22 !important; border-color: #30363d !important; }
+  div[data-baseweb="popover"] { background-color: #161b22 !important; }
+  li[role="option"] { background-color: #161b22 !important; color: #e6edf3 !important; }
+  li[role="option"]:hover { background-color: #1c2128 !important; }
+
+  /* Button */
+  .stButton > button {
+    background-color: #21262d !important;
+    color: #e6edf3 !important;
+    border: 1px solid #30363d !important;
+    border-radius: 6px !important;
+  }
+  .stButton > button:hover { background-color: #30363d !important; }
+
+  /* Font */
   html, body, [class*="css"] {
-    background-color: #0d1117;
-    color: #e6edf3;
     font-family: 'Inter', 'Segoe UI', sans-serif;
   }
-  .main { background-color: #0d1117; }
-  .block-container { padding: 1.5rem 2rem 2rem 2rem; max-width: 1400px; }
 
   /* Hide Streamlit chrome */
   #MainMenu, footer, header { visibility: hidden; }
