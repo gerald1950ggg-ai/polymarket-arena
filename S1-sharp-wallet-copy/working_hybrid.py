@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Working Hybrid Polymarket Monitor
-Uses correct polymarket-apis methods + basic blockchain monitoring concept
+Uses correct polymarket-apis methods + Alchemy/Web3 for on-chain monitoring
 """
 
 import asyncio
@@ -19,14 +19,33 @@ logger = logging.getLogger(__name__)
 load_dotenv()
 
 class WorkingHybridMonitor:
-    """Simplified hybrid monitor using working API methods"""
+    """Simplified hybrid monitor using working API methods + Alchemy on-chain data"""
     
     def __init__(self):
         # Initialize API clients
         self.data_client = PolymarketDataClient()
         self.gamma_client = PolymarketGammaClient()
-        
-        # Sharp wallets to monitor
+
+        # ── Alchemy / Web3 setup ──────────────────────────────────────────
+        api_key = os.getenv("ALCHEMY_API_KEY", "")
+        if api_key:
+            self.polygon_rpc = f"https://polygon-mainnet.g.alchemy.com/v2/{api_key}"
+            try:
+                from web3 import Web3
+                self.w3 = Web3(Web3.HTTPProvider(self.polygon_rpc))
+                if self.w3.is_connected():
+                    logger.info(f"✅ Web3 connected to Polygon via Alchemy (block {self.w3.eth.block_number})")
+                else:
+                    logger.warning("⚠️  Web3 provider created but not connected")
+            except ImportError:
+                logger.warning("⚠️  web3 package not installed; on-chain features disabled")
+                self.w3 = None
+        else:
+            logger.warning("⚠️  ALCHEMY_API_KEY not set; on-chain features disabled")
+            self.polygon_rpc = None
+            self.w3 = None
+
+        # ── Sharp wallets ─────────────────────────────────────────────────
         wallets_str = os.getenv("SHARP_WALLETS", "")
         self.sharp_wallets = [w.strip() for w in wallets_str.split(",") if w.strip()]
         
