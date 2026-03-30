@@ -411,24 +411,16 @@ def main():
             f'</div>',
             unsafe_allow_html=True
         )
-    stat_card(sc1, f"{stats['total']:,}", "Total Signals")
-    stat_card(sc2, f"${stats['capital_at_risk']:,.0f}", "Capital at Risk", "#58a6ff")
-    stat_card(sc3, f"{stats['won']}", "Resolved Won", "#3fb950")
-    stat_card(sc4, f"{stats['lost']}", "Resolved Lost", "#f85149")
-    stat_card(sc5, f"{stats['pending']:,}", "Pending", "#8b949e")
-
-    # ── Second stat row ───────────────────────────────────────────────────
-    sr1, sr2, sr3, sr4, sr5 = st.columns(5)
-    pnl_color = "#3fb950" if stats['realized_pnl'] >= 0 else "#f85149"
-    pnl_sign = "+" if stats['realized_pnl'] >= 0 else ""
-    stat_card(sr1, f"{stats['last_hour']}", "Signals/Hour", "#e6edf3")
-    stat_card(sr2, f"{pnl_sign}${stats['realized_pnl']:,.0f}", "Realized P&L", pnl_color)
     resolved = stats['won'] + stats['lost']
     wr = f"{stats['won']/resolved*100:.0f}%" if resolved > 0 else "—"
-    stat_card(sr3, wr, "Win Rate", "#3fb950" if resolved > 0 else "#8b949e")
-    stat_card(sr4, f"{stats['invalid']:,}", "Rejected (invalid)", "#484f58")
-    ev = sum(b[4] or 0 for b in stats['by_bot']) / max(sum(b[1] for b in stats['by_bot']), 1) if stats['by_bot'] else 0
-    stat_card(sr5, f"{ev:,.0f}", "Avg Exp Value", "#e3b341")
+    pnl_color = "#3fb950" if stats['realized_pnl'] >= 0 else "#f85149"
+    pnl_str = f"+${stats['realized_pnl']:,.0f}" if stats['realized_pnl'] >= 0 else f"-${abs(stats['realized_pnl']):,.0f}"
+
+    stat_card(sc1, f"{stats['pending']:,}", "Pending Signals")
+    stat_card(sc2, f"${stats['capital_at_risk']:,.0f}", "Capital at Risk", "#58a6ff")
+    stat_card(sc3, wr, "Win Rate", "#3fb950" if resolved > 0 else "#8b949e")
+    stat_card(sc4, pnl_str, "Realized P&L", pnl_color)
+    stat_card(sc5, f"{stats['last_hour']}", "Signals This Hour", "#e6edf3")
 
     # ── Main layout: signal feed | right panel ────────────────────────────
     feed_col, right_col = st.columns([2, 1])
@@ -483,44 +475,31 @@ def main():
     # ── Right panel ───────────────────────────────────────────────────────
     with right_col:
 
-        # Per-bot leaderboard with rich metrics
+        # Per-bot table
         st.markdown('<div class="section-title">Bot Performance</div>', unsafe_allow_html=True)
         if stats["by_bot"]:
-            # Header: Bot | Signals | Capital | Conv | Win Rate | P&L | Velocity
             lb_html = (
-                '<div style="display:grid; grid-template-columns:1fr 45px 65px 40px 55px 65px; '
+                '<div style="display:grid; grid-template-columns:1fr 50px 70px 45px; '
                 'gap:6px; padding:6px 12px; font-size:10px; font-weight:600; color:#8b949e; '
                 'text-transform:uppercase; letter-spacing:.06em; border-bottom:1px solid #30363d">'
-                '<span>Bot</span><span>Sigs</span><span>Capital</span>'
-                '<span>Conv</span><span>Win%</span><span>P&amp;L</span>'
+                '<span>Bot</span><span>Sigs</span><span>Capital</span><span>Conv</span>'
                 '</div>'
             )
             for row in stats["by_bot"]:
                 bot_id, cnt, avg_conv, total_cap, exp_val, uniq_mkts, wins, losses, rpnl = row
-                meta = BOT_META.get(bot_id, {"label": bot_id, "emoji": "🤖", "color": "#8b949e"})
-                resolved = (wins or 0) + (losses or 0)
-                wr_str = f"{wins/resolved*100:.0f}%" if resolved > 0 else "—"
-                pnl = rpnl or 0
-                pnl_str = f"+${pnl:,.0f}" if pnl >= 0 else f"-${abs(pnl):,.0f}"
-                pnl_col = "#3fb950" if pnl >= 0 else "#f85149"
+                meta = BOT_META.get(bot_id, {"short": bot_id, "emoji": "🤖", "color": "#8b949e"})
                 vel = stats["velocity"].get(bot_id, 0)
-                vel_str = f"↑{vel}/h" if vel > 0 else ""
+                vel_str = f' <span style="color:#3fb950; font-size:10px">↑{vel}/h</span>' if vel > 0 else ""
                 lb_html += (
-                    f'<div style="display:grid; grid-template-columns:1fr 45px 65px 40px 55px 65px; '
-                    f'gap:6px; padding:7px 12px; font-size:11.5px; border-bottom:1px solid #21262d; align-items:center">'
-                    f'<span style="color:{meta["color"]}; font-weight:600">{meta["emoji"]} {meta["short"]}'
-                    f'<span style="color:#484f58; font-size:10px"> {vel_str}</span></span>'
-                    f'<span>{cnt}</span>'
+                    f'<div style="display:grid; grid-template-columns:1fr 50px 70px 45px; '
+                    f'gap:6px; padding:7px 12px; font-size:12px; border-bottom:1px solid #21262d; align-items:center">'
+                    f'<span style="color:{meta["color"]}; font-weight:600">{meta["emoji"]} {meta["short"]}{vel_str}</span>'
+                    f'<span>{cnt:,}</span>'
                     f'<span style="color:#58a6ff">${(total_cap or 0):,.0f}</span>'
-                    f'<span style="color:#e3b341">{avg_conv:.1f}</span>'
-                    f'<span style="color:#{"3fb950" if resolved>0 else "484f58"}">{wr_str}</span>'
-                    f'<span style="color:{pnl_col}">{pnl_str}</span>'
+                    f'<span style="color:#e3b341">{(avg_conv or 0):.1f}</span>'
                     f'</div>'
                 )
-            st.markdown(
-                f'<div class="card" style="padding:0 0 8px 0">{lb_html}</div>',
-                unsafe_allow_html=True
-            )
+            st.markdown(f'<div class="card" style="padding:0 0 8px 0">{lb_html}</div>', unsafe_allow_html=True)
         else:
             st.markdown('<div class="card" style="color:#8b949e">No data yet</div>', unsafe_allow_html=True)
 
