@@ -6,10 +6,77 @@ Logs real bot signals with full context for retroactive scoring
 
 import sqlite3
 import json
-from datetime import datetime
+import requests
+from datetime import datetime, timezone
 from typing import Optional, Dict
 
 DB_PATH = "shadow.db"
+
+# ── Condition ID validator ────────────────────────────────────────────────────
+
+_market_cache: Dict[str, dict] = {}  # condition_id → market data
+_cache_ts: Dict[str, float] = {}
+_CACHE_TTL = 300  # 5 minutes
+
+def validate_condition_id(condition_id: str) -> Optional[dict]:
+    """
+    Check that a condition_id maps to a currently active, non-expired Polymarket market.
+    Returns market dict if valid, None if invalid/expired/not found.
+    Caches results for 5 minutes to avoid hammering the API.
+    """
+    if not condition_id or not condition_id.startswith("0x") or len(condition_id) < 10:
+        return None  # Empty or clearly fake
+
+    now = datetime.now(timezone.utc).timestamp()
+
+    # Return cached result if fresh
+    if condition_id in _market_cache:
+        if now - _cache_ts.get(condition_id, 0) < _CACHE_TTL:
+            return _market_cache[condition_id]
+
+    try:
+        r = requests.get(
+            f"https://clob.polymarket.com/markets/{condition_id}",
+            timeout=5
+        )
+        if not r.ok or not r.json():
+            _market_cache[condition_id] = None
+            _cache_ts[condition_id] = now
+            return None
+
+        # CLOB returns a single market object
+        market = r.json()
+        if not isinstance(market, dict):
+            _market_cache[condition_id] = None
+            _cache_ts[condition_id] = now
+            return None
+        # CLOB fields: closed, end_date_iso
+        end_date_str = market.get("end_date_iso") or market.get("endDate") or ""
+        closed = market.get("closed", False)
+
+        # Reject if closed or end date is in the past
+        if closed:
+            _market_cache[condition_id] = None
+            _cache_ts[condition_id] = now
+            return None
+
+        if end_date_str:
+            try:
+                end_dt = datetime.fromisoformat(end_date_str.replace("Z", "+00:00"))
+                if end_dt < datetime.now(timezone.utc):
+                    _market_cache[condition_id] = None
+                    _cache_ts[condition_id] = now
+                    return None
+            except Exception:
+                pass  # Can't parse date — let it through
+
+        _market_cache[condition_id] = market
+        _cache_ts[condition_id] = now
+        return market
+
+    except Exception:
+        # On network error, don't block the signal — log without validation
+        return {"question": "", "endDate": "", "_unvalidated": True}
 
 def init_shadow_db(db_path=DB_PATH):
     conn = sqlite3.connect(db_path)
@@ -66,9 +133,35 @@ def log_signal(
     shadow_size: float = 500.0,
     raw_signal: Optional[Dict] = None,
     notes: str = "",
-    db_path: str = DB_PATH
+    db_path: str = DB_PATH,
+    skip_validation: bool = False
 ) -> int:
-    """Log a shadow signal. Returns the signal ID."""
+    """
+    Log a shadow signal. Returns the signal ID.
+    If condition_id is provided, validates it against Polymarket before logging.
+    Returns -1 if the signal is rejected (expired/invalid market).
+    """
+    import logging
+    logger = logging.getLogger("shadow_log")
+
+    # ── Validate condition_id if provided ─────────────────────────────────
+    if condition_id and not skip_validation:
+        market = validate_condition_id(condition_id)
+        if market is None:
+            logger.info(
+                f"🚫 REJECTED signal from {bot_id}: condition_id {condition_id[:16]}... "
+                f"is expired, closed, or not found. Market: '{market_title[:50]}'"
+            )
+            return -1  # Signal rejected
+        # If market data came back, use its end date
+        if market and not market.get("_unvalidated"):
+            end = market.get("endDate") or market.get("end_date") or ""
+            if end and not market_end_date:
+                market_end_date = end
+            # Use real market question if we don't have a good title
+            if not market_title or market_title.startswith("LP Exit Signal"):
+                market_title = market.get("question", market_title) or market_title
+
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
     cursor.execute('''
