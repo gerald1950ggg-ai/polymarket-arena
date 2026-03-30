@@ -170,37 +170,38 @@ class WorkingHybridMonitor:
 
     async def analyze_wallet_performance(self, wallet_address: str) -> dict | None:
         """
-        Fetch recent trades for a wallet via Polymarket API and compute a quality
-        score. Uses ONLY get_trades() — get_positions() returns 400 for most wallets.
+        Fetch recent trades for a wallet via raw data API (returns dicts with
+        conditionId and title). Skips wallets whose most recent trade is on a
+        closed/expired market.
         """
         import math
+        import requests as _req
 
         try:
-            trades = self.data_client.get_trades(user=wallet_address, limit=20)
+            # Use raw data API — returns dicts with conditionId, title, timestamp
+            resp = _req.get(
+                "https://data-api.polymarket.com/trades",
+                params={"limit": 20, "takerOnly": True, "user": wallet_address},
+                timeout=8,
+            )
+            if not resp.ok:
+                return None
+            trades = resp.json()
 
             if not trades or len(trades) < 2:
                 logger.debug(f"Wallet {wallet_address[:8]}: not enough trades ({len(trades) if trades else 0})")
                 return None
 
             trade_count = len(trades)
-
-            # Unique markets traded (diversity)
             unique_conditions = set()
             total_size = 0.0
             most_recent_ts = 0
             most_recent_trade = None
 
             for t in trades:
-                cid = getattr(t, "condition_id", None) or ""
-                size = float(getattr(t, "size", None) or 0)
-                raw_ts = getattr(t, "timestamp", None)
-                # timestamp may be a datetime object or an int
-                if raw_ts is None:
-                    ts = 0
-                elif hasattr(raw_ts, "timestamp"):
-                    ts = int(raw_ts.timestamp())
-                else:
-                    ts = int(raw_ts)
+                cid = t.get("conditionId") or ""
+                size = float(t.get("size") or 0)
+                ts = int(t.get("timestamp") or 0)
 
                 if cid:
                     unique_conditions.add(cid)
@@ -210,26 +211,36 @@ class WorkingHybridMonitor:
                     most_recent_trade = t
 
             avg_trade_size = total_size / trade_count if trade_count else 0
-
-            # Recency bonus: higher score if they traded recently
             now_ts = int(time.time())
             seconds_since_last = now_ts - most_recent_ts if most_recent_ts else 999999
-            recency_score = max(0.0, 1.0 - seconds_since_last / 86400)  # 0–1 over 24h
+            recency_score = max(0.0, 1.0 - seconds_since_last / 86400)
 
             market_diversity = len(unique_conditions)
-            is_sharp = trade_count >= 2  # Any wallet with 2+ trades qualifies
+            is_sharp = trade_count >= 2
 
-            # Pull market info from the most recent trade
+            # Extract market info directly from raw trade dict
             recent_market_title = "Unknown Market"
             recent_condition_id = ""
             if most_recent_trade is not None:
-                recent_condition_id = getattr(most_recent_trade, "condition_id", None) or ""
-                # Try to get a market question from the trade object
+                recent_condition_id = most_recent_trade.get("conditionId") or ""
                 recent_market_title = (
-                    getattr(most_recent_trade, "title", None)
-                    or getattr(most_recent_trade, "slug", None)
+                    most_recent_trade.get("title")
+                    or most_recent_trade.get("slug")
                     or (f"Market {recent_condition_id[:8]}..." if recent_condition_id else "Unknown Market")
                 )
+
+            # Gate: only proceed if the most recent trade is on an OPEN market
+            if recent_condition_id:
+                try:
+                    r = _req.get(
+                        f"https://clob.polymarket.com/markets/{recent_condition_id}",
+                        timeout=5,
+                    )
+                    if not r.ok or r.json().get("closed", True):
+                        logger.debug(f"Wallet {wallet_address[:8]}: most recent market {recent_condition_id[:12]} is closed — skipping")
+                        return None
+                except Exception:
+                    pass  # Network error — proceed without validation
 
             return {
                 "wallet":              wallet_address,
@@ -265,13 +276,12 @@ class WorkingHybridMonitor:
         conviction = trade_score + div_score + size_score + recency + disc_score
 
         if conviction >= 3.0:
-            # Use the wallet's most recent trade market if available; fallback to market_context
+            # Use the wallet's actual most recent trade market — no fallback to random markets
             condition_id = wallet_analysis.get("recent_condition_id", "")
             market_title = wallet_analysis.get("recent_market_title", "")
-            if not market_title or market_title == "Unknown Market":
-                market_title = market_context[0]["question"] if market_context else "Unknown Market"
-            if not condition_id and market_context:
-                condition_id = market_context[0]["condition_id"]
+            # If we have no real market, skip — don't fabricate one
+            if not condition_id:
+                return None
 
             copy_size = min(wallet_analysis["avg_trade_size"] * 0.5, 500)
             return {
