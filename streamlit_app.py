@@ -202,10 +202,10 @@ def get_db(name="shadow.db"):
 def load_signals(limit=200, bot_filter=None):
     try:
         conn = sqlite3.connect(get_db("shadow.db"))
-        query = "SELECT * FROM shadow_signals ORDER BY rowid DESC LIMIT ?"
+        query = "SELECT * FROM shadow_signals WHERE resolution_status != 'invalid' ORDER BY rowid DESC LIMIT ?"
         params = [limit]
         if bot_filter and bot_filter != "All":
-            query = "SELECT * FROM shadow_signals WHERE bot_id=? ORDER BY rowid DESC LIMIT ?"
+            query = "SELECT * FROM shadow_signals WHERE bot_id=? AND resolution_status != 'invalid' ORDER BY rowid DESC LIMIT ?"
             params = [bot_filter, limit]
         df = pd.read_sql_query(query, conn, params=params)
         conn.close()
@@ -234,14 +234,16 @@ def load_stats():
         won = cur.fetchone()[0]
         cur.execute("SELECT COUNT(*) FROM shadow_signals WHERE resolution_status='lost'")
         lost = cur.fetchone()[0]
-        cur.execute("SELECT COUNT(*) FROM shadow_signals WHERE timestamp > datetime('now', '-1 hour')")
+        cur.execute("SELECT COUNT(*) FROM shadow_signals WHERE resolution_status='pending'")
+        pending_count = cur.fetchone()[0]
+        cur.execute("SELECT COUNT(*) FROM shadow_signals WHERE timestamp > datetime('now', '-1 hour') AND resolution_status != 'invalid'")
         last_hour = cur.fetchone()[0]
-        cur.execute("SELECT bot_id, COUNT(*) as cnt, AVG(conviction_score) as avg_conv FROM shadow_signals GROUP BY bot_id ORDER BY cnt DESC")
+        cur.execute("SELECT bot_id, COUNT(*) as cnt, AVG(conviction_score) as avg_conv FROM shadow_signals WHERE resolution_status != 'invalid' GROUP BY bot_id ORDER BY cnt DESC")
         by_bot = cur.fetchall()
         conn.close()
-        return {"total": total, "won": won, "lost": lost, "last_hour": last_hour, "by_bot": by_bot}
+        return {"total": total, "won": won, "lost": lost, "pending": pending_count, "last_hour": last_hour, "by_bot": by_bot}
     except Exception:
-        return {"total": 0, "won": 0, "lost": 0, "last_hour": 0, "by_bot": []}
+        return {"total": 0, "won": 0, "lost": 0, "pending": 0, "last_hour": 0, "by_bot": []}
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 def bot_tag(bot_id):
@@ -352,8 +354,7 @@ def main():
     stat_card(sc2, f"{stats['last_hour']}", "Last Hour", "#58a6ff")
     stat_card(sc3, f"{stats['won']}", "Resolved Won", "#3fb950")
     stat_card(sc4, f"{stats['lost']}", "Resolved Lost", "#f85149")
-    pending = stats["total"] - stats["won"] - stats["lost"]
-    stat_card(sc5, f"{pending:,}", "Pending", "#8b949e")
+    stat_card(sc5, f"{stats['pending']:,}", "Pending", "#8b949e")
 
     # ── Main layout: signal feed | right panel ────────────────────────────
     feed_col, right_col = st.columns([2, 1])
