@@ -343,7 +343,8 @@ def load_stats():
 # ── Helpers ───────────────────────────────────────────────────────────────────
 def bot_tag(bot_id):
     m = BOT_META.get(bot_id, {"label": bot_id, "tag": "tag-s1", "emoji": "🤖"})
-    return f'<span class="tag {m["tag"]}">{m["emoji"]} {m["label"]}</span>'
+    label = m["label"].replace("·", "&middot;")
+    return f'<span class="tag {m["tag"]}">{m["emoji"]} {esc(label)}</span>'
 
 def direction_tag(direction):
     d = (direction or "").upper()
@@ -365,7 +366,7 @@ def fmt_time(ts):
             return f"{delta.seconds//60}m ago"
         return dt.strftime("%H:%M")
     except Exception:
-        return str(ts)[:16] if ts else "—"
+        return str(ts)[:16] if ts else "&#8212;"
 
 def is_alive(heartbeat_str):
     try:
@@ -392,8 +393,8 @@ def main():
 
     st.markdown(
         f"<div style='color:#8b949e; font-size:12px; margin-top:-12px; margin-bottom:16px'>"
-        f"Last updated {datetime.utcnow().strftime('%H:%M:%S UTC')} · "
-        f"{stats['total']:,} total signals · "
+        f"Last updated {datetime.utcnow().strftime('%H:%M:%S UTC')} &middot; "
+        f"{stats['total']:,} total signals &middot; "
         f"{stats['last_hour']} in last hour</div>",
         unsafe_allow_html=True
     )
@@ -426,7 +427,7 @@ def main():
                 f'<div style="display:flex; align-items:center; gap:6px; font-size:11px">'
                 f'<span class="{dot}"></span>'
                 f'<span style="color:{status_color}; font-weight:600">{esc(status_text)}</span>'
-                f'<span style="color:#484f58">·</span>'
+                '<span style="color:#484f58">&middot;</span>'
                 f'<span style="color:#c9d1d9">{cnt:,} signals</span>'
                 f'</div>'
                 f'<div style="font-size:10.5px; color:#8b949e; margin-top:4px; font-style:italic">{esc(task)}</div>'
@@ -446,7 +447,7 @@ def main():
             unsafe_allow_html=True
         )
     resolved = stats['won'] + stats['lost']
-    wr = f"{stats['won']/resolved*100:.0f}%" if resolved > 0 else "—"
+    wr = f"{stats['won']/resolved*100:.0f}%" if resolved > 0 else "&#8212;"
     pnl_color = "#3fb950" if stats['realized_pnl'] >= 0 else "#f85149"
     pnl_str = f"+${stats['realized_pnl']:,.0f}" if stats['realized_pnl'] >= 0 else f"-${abs(stats['realized_pnl']):,.0f}"
 
@@ -522,10 +523,11 @@ def main():
                     source = "PRO" if "proactive" in notes else "RXV" if "reactive" in notes else "?"
                     src_color = "#a371f7" if source == "PRO" else "#e3b341"
                     has_cid = bool(row.get("condition_id"))
-                    match_dot = f'<span style="color:#3fb950" title="Market matched">●</span>' if has_cid else f'<span style="color:#484f58" title="No market match">○</span>'
-                    market_short = f'<span style="color:{src_color}; font-size:10px">[{source}]</span> {match_dot} {esc(market[:42] + "…" if len(market) > 42 else market)}'
+                    match_dot = '<span style="color:#3fb950" title="Market matched">&#x25CF;</span>' if has_cid else '<span style="color:#484f58" title="No market match">&#x25CB;</span>'
+                    mkt_trunc = esc(market[:42] + "..." if len(market) > 42 else market)
+                    market_short = f'<span style="color:{src_color}; font-size:10px">[{source}]</span> {match_dot} {mkt_trunc}'
                 else:
-                    market_short = esc(market[:52] + "…" if len(market) > 52 else market)
+                    market_short = esc(market[:52] + "..." if len(market) > 52 else market)
                 size = float(row.get("shadow_size", 0) or 0)
                 conv = float(row.get("conviction_score", 0) or 0)
                 rows_html += (
@@ -561,7 +563,7 @@ def main():
                 bot_id, cnt, avg_conv, total_cap, exp_val, uniq_mkts, wins, losses, rpnl = row
                 meta = BOT_META.get(bot_id, {"short": bot_id, "emoji": "🤖", "color": "#8b949e"})
                 vel = stats["velocity"].get(bot_id, 0)
-                vel_str = f' <span style="color:#3fb950; font-size:10px">↑{vel}/h</span>' if vel > 0 else ""
+                vel_str = f' <span style="color:#3fb950; font-size:10px">&#8593;{vel}/h</span>' if vel > 0 else ""
                 lb_html += (
                     f'<div style="display:grid; grid-template-columns:1fr 50px 70px 45px; '
                     f'gap:6px; padding:7px 12px; font-size:12px; border-bottom:1px solid #21262d; align-items:center">'
@@ -620,7 +622,7 @@ def main():
             st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 
         # S4 Wikipedia intelligence panel
-        st.markdown('<div class="section-title">📚 S4 Wikipedia Intelligence</div>', unsafe_allow_html=True)
+        st.markdown('<div class="section-title">S4 Wikipedia Intelligence</div>', unsafe_allow_html=True)
         s4_meta = BOT_META.get("S4_wikipedia", {"color": "#a371f7"})
         s4_html = (
             f'<div class="card" style="border-left:3px solid {s4_meta["color"]}; padding:0 0 4px 0">'
@@ -659,9 +661,9 @@ def main():
                 notes = str(row.get("notes", ""))
                 source = "proactive" if "proactive" in notes else "reactive" if "reactive" in notes else "unknown"
                 src_color = s4_meta["color"] if source == "proactive" else "#e3b341"
-                src_label = "👁 PROACTIVE" if source == "proactive" else "⚡ REACTIVE"
+                src_label = "PROACTIVE" if source == "proactive" else "REACTIVE"
                 has_match = bool(row.get("condition_id"))
-                match_badge = '<span style="color:#3fb950; font-size:10px">✓ matched</span>' if has_match else '<span style="color:#484f58; font-size:10px">✗ no match</span>'
+                match_badge = '<span style="color:#3fb950; font-size:10px">matched</span>' if has_match else '<span style="color:#484f58; font-size:10px">no match</span>'
                 headline = esc(str(row.get("signal_headline", ""))[:70])
                 s4_feed += (
                     f'<div style="padding:7px 12px; border-bottom:1px solid #21262d; font-size:11.5px">'
@@ -677,7 +679,7 @@ def main():
     # ── Auto-refresh ──────────────────────────────────────────────────────
     st.markdown(
         "<div style='text-align:center; color:#484f58; font-size:11px; margin-top:24px'>"
-        "Auto-refreshes every 15 seconds · All data from live Polymarket APIs</div>",
+        "Auto-refreshes every 15 seconds &middot; All data from live Polymarket APIs</div>",
         unsafe_allow_html=True
     )
 
